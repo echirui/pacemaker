@@ -10,12 +10,32 @@ pub struct PacemakerDb {
 impl PacemakerDb {
     pub fn open(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
-        // Prevent database is locked issues on slow FAT32 storage (Issue #1)
+        // Ultra-low memory profile for embedded & memory-constrained hardware:
+        // - busy_timeout: 5s timeout preventing database locked errors on slow FAT32.
+        // - synchronous = NORMAL: balanced durability without high I/O.
+        // - cache_size = -512: strictly caps SQLite page cache to 512 KB in RAM.
+        // - temp_store = FILE: prevents temporary B-Trees from consuming scarce RAM.
+        // - mmap_size = 0: zero memory mapping to eliminate virtual memory bloat.
+        // - threads = 0: single-threaded operation saves thread stack allocations.
+        // - CREATE INDEX: eliminates in-memory sorting B-Trees during queries.
         let _ = conn.execute_batch("
             PRAGMA busy_timeout = 5000;
             PRAGMA synchronous = NORMAL;
+            PRAGMA cache_size = -512;
+            PRAGMA temp_store = FILE;
+            PRAGMA mmap_size = 0;
+            PRAGMA threads = 0;
+            CREATE INDEX IF NOT EXISTS idx_casetracks_case_id ON casetracks (case_id);
+            CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks (artist);
+            CREATE INDEX IF NOT EXISTS idx_tracks_title ON tracks (title);
         ");
         Ok(Self { conn })
+    }
+
+    /// Releases freed SQLite pages and memory buffers back to the operating system
+    pub fn shrink_memory(&self) -> Result<()> {
+        self.conn.execute_batch("PRAGMA shrink_memory;")?;
+        Ok(())
     }
 
     pub fn get_tracks(

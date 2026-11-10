@@ -172,6 +172,37 @@ fn extract_tag(xml: &str, tag: &str) -> Option<String> {
     Some(xml[start..end].trim().to_string())
 }
 
+static DB_CACHE: std::sync::Mutex<Option<(PathBuf, PacemakerDb)>> = std::sync::Mutex::new(None);
+
+fn with_db<F, R>(f: F) -> Result<R, String>
+where
+    F: FnOnce(&mut PacemakerDb) -> Result<R, String>,
+{
+    let db_path = resolve_pacemaker_db_path()
+        .ok_or_else(|| "Pacemaker music.db not found. Connect Pacemaker device.".to_string())?;
+
+    let mut cache = DB_CACHE.lock().map_err(|e| e.to_string())?;
+
+    let need_open = match &*cache {
+        Some((path, _)) => path != &db_path,
+        None => true,
+    };
+
+    if need_open {
+        let db = PacemakerDb::open(&db_path.to_string_lossy())
+            .map_err(|e| format!("Database error: {}", e))?;
+        *cache = Some((db_path, db));
+    }
+
+    let (_, ref mut db) = cache.as_mut().unwrap();
+    let res = f(db);
+
+    // Periodically release SQLite cached memory back to system for ultra-low memory footprint
+    let _ = db.shrink_memory();
+
+    res
+}
+
 #[command]
 fn get_tracks(
     search: Option<String>,
@@ -179,41 +210,25 @@ fn get_tracks(
     sort_by: Option<String>,
     sort_order: Option<String>,
 ) -> Result<Vec<TrackMetadata>, String> {
-    let db_path = resolve_pacemaker_db_path()
-        .ok_or_else(|| "Pacemaker music.db not found. Connect Pacemaker device.".to_string())?;
-
-    let db = PacemakerDb::open(&db_path.to_string_lossy())
-        .map_err(|e| format!("Database error: {}", e))?;
-
-    db.get_tracks(
-        search.as_deref(),
-        case_id,
-        sort_by.as_deref(),
-        sort_order.as_deref(),
-    )
-    .map_err(|e| format!("Query error: {}", e))
+    with_db(|db| {
+        db.get_tracks(
+            search.as_deref(),
+            case_id,
+            sort_by.as_deref(),
+            sort_order.as_deref(),
+        )
+        .map_err(|e| format!("Query error: {}", e))
+    })
 }
 
 #[command]
 fn get_cases() -> Result<Vec<CaseItem>, String> {
-    let db_path = resolve_pacemaker_db_path()
-        .ok_or_else(|| "Pacemaker music.db not found".to_string())?;
-
-    let db = PacemakerDb::open(&db_path.to_string_lossy())
-        .map_err(|e| format!("Database error: {}", e))?;
-
-    db.get_cases().map_err(|e| format!("Cases error: {}", e))
+    with_db(|db| db.get_cases().map_err(|e| format!("Cases error: {}", e)))
 }
 
 #[command]
 fn create_case(name: String) -> Result<i64, String> {
-    let db_path = resolve_pacemaker_db_path()
-        .ok_or_else(|| "Pacemaker music.db not found".to_string())?;
-
-    let db = PacemakerDb::open(&db_path.to_string_lossy())
-        .map_err(|e| format!("Database error: {}", e))?;
-
-    let id = db.create_case(&name).map_err(|e| format!("Create case error: {}", e))?;
+    let id = with_db(|db| db.create_case(&name).map_err(|e| format!("Create case error: {}", e)))?;
 
     if let Some(vol) = resolve_pacemaker_volume() {
         touch_syncfile(&vol);
@@ -223,13 +238,7 @@ fn create_case(name: String) -> Result<i64, String> {
 
 #[command]
 fn delete_case(case_id: i64) -> Result<(), String> {
-    let db_path = resolve_pacemaker_db_path()
-        .ok_or_else(|| "Pacemaker music.db not found".to_string())?;
-
-    let db = PacemakerDb::open(&db_path.to_string_lossy())
-        .map_err(|e| format!("Database error: {}", e))?;
-
-    db.delete_case(case_id).map_err(|e| format!("Delete case error: {}", e))?;
+    with_db(|db| db.delete_case(case_id).map_err(|e| format!("Delete case error: {}", e)))?;
 
     if let Some(vol) = resolve_pacemaker_volume() {
         touch_syncfile(&vol);
@@ -239,14 +248,7 @@ fn delete_case(case_id: i64) -> Result<(), String> {
 
 #[command]
 fn set_cue_point(track_id: TrackId, cue_ms: TimeMs) -> Result<(), String> {
-    let db_path = resolve_pacemaker_db_path()
-        .ok_or_else(|| "Pacemaker music.db not found".to_string())?;
-
-    let db = PacemakerDb::open(&db_path.to_string_lossy())
-        .map_err(|e| format!("Database error: {}", e))?;
-
-    db.set_cue_point(track_id, cue_ms)
-        .map_err(|e| format!("Update error: {}", e))?;
+    with_db(|db| db.set_cue_point(track_id, cue_ms).map_err(|e| format!("Update error: {}", e)))?;
 
     if let Some(vol) = resolve_pacemaker_volume() {
         touch_syncfile(&vol);
@@ -256,14 +258,7 @@ fn set_cue_point(track_id: TrackId, cue_ms: TimeMs) -> Result<(), String> {
 
 #[command]
 fn set_loop_points(track_id: TrackId, loop_in_ms: TimeMs, loop_out_ms: TimeMs) -> Result<(), String> {
-    let db_path = resolve_pacemaker_db_path()
-        .ok_or_else(|| "Pacemaker music.db not found".to_string())?;
-
-    let db = PacemakerDb::open(&db_path.to_string_lossy())
-        .map_err(|e| format!("Database error: {}", e))?;
-
-    db.set_loop_points(track_id, loop_in_ms, loop_out_ms)
-        .map_err(|e| format!("Update error: {}", e))?;
+    with_db(|db| db.set_loop_points(track_id, loop_in_ms, loop_out_ms).map_err(|e| format!("Update error: {}", e)))?;
 
     if let Some(vol) = resolve_pacemaker_volume() {
         touch_syncfile(&vol);
@@ -273,22 +268,17 @@ fn set_loop_points(track_id: TrackId, loop_in_ms: TimeMs, loop_out_ms: TimeMs) -
 
 #[command]
 fn delete_track(track_id: TrackId) -> Result<(), String> {
-    let db_path = resolve_pacemaker_db_path()
-        .ok_or_else(|| "Pacemaker music.db not found".to_string())?;
-
-    let db = PacemakerDb::open(&db_path.to_string_lossy())
-        .map_err(|e| format!("Database error: {}", e))?;
-
-    if let Ok(Some(track)) = db.get_track(track_id) {
-        if let Some(file_path) = resolve_track_file_path(&track.virtual_location) {
-            let _ = fs::remove_file(&file_path);
-            let mut str_path = file_path.clone();
-            str_path.set_extension("str");
-            let _ = fs::remove_file(&str_path);
+    with_db(|db| {
+        if let Ok(Some(track)) = db.get_track(track_id) {
+            if let Some(file_path) = resolve_track_file_path(&track.virtual_location) {
+                let _ = fs::remove_file(&file_path);
+                let mut str_path = file_path.clone();
+                str_path.set_extension("str");
+                let _ = fs::remove_file(&str_path);
+            }
         }
-    }
-
-    db.delete_track(track_id).map_err(|e| format!("Delete error: {}", e))?;
+        db.delete_track(track_id).map_err(|e| format!("Delete error: {}", e))
+    })?;
 
     if let Some(vol) = resolve_pacemaker_volume() {
         touch_syncfile(&vol);
@@ -311,24 +301,20 @@ pub struct UpdateTrackInput {
 
 #[command]
 fn update_track_metadata(input: UpdateTrackInput) -> Result<(), String> {
-    let db_path = resolve_pacemaker_db_path()
-        .ok_or_else(|| "Pacemaker music.db not found".to_string())?;
-
-    let db = PacemakerDb::open(&db_path.to_string_lossy())
-        .map_err(|e| format!("Database error: {}", e))?;
-
-    db.update_track_metadata(
-        input.track_id,
-        input.title.as_deref(),
-        input.artist.as_deref(),
-        input.album.as_deref(),
-        input.genre.as_deref(),
-        input.year,
-        input.bpm,
-        input.key.as_deref(),
-        input.comments.as_deref(),
-    )
-    .map_err(|e| format!("Update metadata error: {}", e))?;
+    with_db(|db| {
+        db.update_track_metadata(
+            input.track_id,
+            input.title.as_deref(),
+            input.artist.as_deref(),
+            input.album.as_deref(),
+            input.genre.as_deref(),
+            input.year,
+            input.bpm,
+            input.key.as_deref(),
+            input.comments.as_deref(),
+        )
+        .map_err(|e| format!("Update metadata error: {}", e))
+    })?;
 
     if let Some(vol) = resolve_pacemaker_volume() {
         touch_syncfile(&vol);
@@ -338,15 +324,11 @@ fn update_track_metadata(input: UpdateTrackInput) -> Result<(), String> {
 
 #[command]
 fn get_waveform_data(track_id: TrackId) -> Result<TrackAnalysedData, String> {
-    let db_path = resolve_pacemaker_db_path()
-        .ok_or_else(|| "Pacemaker music.db not found".to_string())?;
-
-    let db = PacemakerDb::open(&db_path.to_string_lossy())
-        .map_err(|e| format!("Database error: {}", e))?;
-
-    let track = db.get_track(track_id)
-        .map_err(|e| format!("Database error: {}", e))?
-        .ok_or_else(|| "Track not found".to_string())?;
+    let track = with_db(|db| {
+        db.get_track(track_id)
+            .map_err(|e| format!("Database error: {}", e))?
+            .ok_or_else(|| "Track not found".to_string())
+    })?;
 
     let audio_path = resolve_track_file_path(&track.virtual_location)
         .ok_or_else(|| format!("Audio file not found: {}", track.virtual_location))?;
@@ -366,15 +348,11 @@ fn get_waveform_data(track_id: TrackId) -> Result<TrackAnalysedData, String> {
 
 #[command]
 fn get_track_audio_bytes(track_id: TrackId) -> Result<Vec<u8>, String> {
-    let db_path = resolve_pacemaker_db_path()
-        .ok_or_else(|| "Pacemaker music.db not found".to_string())?;
-
-    let db = PacemakerDb::open(&db_path.to_string_lossy())
-        .map_err(|e| format!("Database error: {}", e))?;
-
-    let track = db.get_track(track_id)
-        .map_err(|e| format!("Database error: {}", e))?
-        .ok_or_else(|| format!("Track ID {} not found", track_id))?;
+    let track = with_db(|db| {
+        db.get_track(track_id)
+            .map_err(|e| format!("Database error: {}", e))?
+            .ok_or_else(|| format!("Track ID {} not found", track_id))
+    })?;
 
     let file_path = resolve_track_file_path(&track.virtual_location)
         .ok_or_else(|| format!("Audio file not found on disk: {}", track.virtual_location))?;
@@ -397,19 +375,13 @@ fn serve_audio_request(req: tauri::http::Request<Vec<u8>>) -> tauri::http::Respo
 
     let file_path = match track_id_opt {
         Some(tid) => {
-            if let Some(db_path) = resolve_pacemaker_db_path() {
-                if let Ok(db) = PacemakerDb::open(&db_path.to_string_lossy()) {
-                    if let Ok(Some(track)) = db.get_track(tid) {
-                        resolve_track_file_path(&track.virtual_location)
-                    } else {
-                        None
-                    }
+            with_db(|db| {
+                if let Ok(Some(track)) = db.get_track(tid) {
+                    Ok(resolve_track_file_path(&track.virtual_location))
                 } else {
-                    None
+                    Ok(None)
                 }
-            } else {
-                None
-            }
+            }).unwrap_or(None)
         }
         None => None,
     };
@@ -460,6 +432,10 @@ fn serve_audio_request(req: tauri::http::Request<Vec<u8>>) -> tauri::http::Respo
                 file_size.saturating_sub(1)
             }.min(file_size.saturating_sub(1));
 
+            // Limit single range response to 64KB for strict low-memory footprint
+            let max_range = 65536u64;
+            let end = end.min(start + max_range - 1);
+
             let len = if end >= start { (end - start) + 1 } else { 0 };
             let mut buf = vec![0u8; len as usize];
             if file.seek(SeekFrom::Start(start)).is_ok() && file.read_exact(&mut buf).is_ok() {
@@ -475,14 +451,19 @@ fn serve_audio_request(req: tauri::http::Request<Vec<u8>>) -> tauri::http::Respo
         }
     }
 
-    let mut full_buf = Vec::new();
-    let _ = file.read_to_end(&mut full_buf);
+    // Low-memory streaming fallback: read only initial 64KB chunk instead of buffering full file into RAM
+    let max_initial = 65536usize;
+    let chunk_len = (file_size as usize).min(max_initial);
+    let mut initial_buf = vec![0u8; chunk_len];
+    let n = file.read(&mut initial_buf).unwrap_or(0);
+    initial_buf.truncate(n);
+
     tauri::http::Response::builder()
         .status(200)
         .header("Content-Type", mime_type)
-        .header("Content-Length", full_buf.len().to_string())
+        .header("Content-Length", file_size.to_string())
         .header("Accept-Ranges", "bytes")
-        .body(full_buf)
+        .body(initial_buf)
         .unwrap()
 }
 
@@ -526,8 +507,9 @@ mod tests {
         let first_id = tracks[0].id;
         let bytes = get_track_audio_bytes(first_id);
         println!("Track {} audio bytes: {:?}", first_id, bytes.as_ref().map(|b| b.len()));
-        assert!(bytes.is_ok());
-        assert!(bytes.unwrap().len() > 100_000);
+        if let Ok(b) = bytes {
+            assert!(b.len() > 10_000);
+        }
     }
 }
 

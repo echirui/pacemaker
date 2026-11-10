@@ -8,15 +8,16 @@ use std::f32::consts::PI;
 
 pub struct SincInterpolator {
     points: usize,
-    table: Vec<Vec<f32>>,
+    table: Vec<f32>,
     phases: usize,
 }
 
 impl SincInterpolator {
-    /// Creates a new windowed Sinc interpolator with precomputed polyphase lookup tables
+    /// Creates a new windowed Sinc interpolator with precomputed polyphase lookup tables.
+    /// Uses a single contiguous 1D buffer to minimize memory footprint and eliminate heap fragmentation.
     pub fn new(half_points: usize, phases: usize) -> Self {
         let total_points = half_points * 2;
-        let mut table = Vec::with_capacity(phases);
+        let mut table = Vec::with_capacity(phases * total_points);
 
         for phase_idx in 0..phases {
             let phase = phase_idx as f32 / phases as f32;
@@ -46,7 +47,7 @@ impl SincInterpolator {
                 }
             }
 
-            table.push(filter);
+            table.extend_from_slice(&filter);
         }
 
         Self {
@@ -62,7 +63,8 @@ impl SincInterpolator {
         let frac = pos - pos.floor();
 
         let phase_idx = ((frac * self.phases as f32).round() as usize) % self.phases;
-        let filter = &self.table[phase_idx];
+        let offset = phase_idx * self.points;
+        let filter = &self.table[offset..offset + self.points];
         let half = (self.points / 2) as isize;
 
         let mut sum = 0.0f32;
@@ -83,8 +85,9 @@ impl SincInterpolator {
 }
 
 impl Default for SincInterpolator {
+    /// Ultra-compact low-memory default profile (12 points, 16 phases = 768 bytes RAM)
     fn default() -> Self {
-        Self::new(8, 64)
+        Self::new(6, 16)
     }
 }
 
