@@ -10,11 +10,13 @@ pub mod db;
 pub mod dsp;
 pub mod engine;
 pub mod firmware;
+pub mod metadata;
 
 pub use types::{DeckId, PlaybackState, TimeMs, TrackId, TrackMetadata};
 pub use hasher::{generate_track_paths, jenkins_hash, pjw_hash, TrackPaths};
 pub use waveform::TrackAnalysedData;
 pub use db::PacemakerDb;
-pub use dsp::{AudioProcessBuffer, CompoundCrossfader, CrossfaderCurve, ParametricEq};
-pub use engine::{AudioCoreEvent, AudioLoop, Deck, PacemakerMixer};
+pub use dsp::{AudioPeakLimiter, AudioProcessBuffer, CompoundCrossfader, CrossfaderCurve, ParametricEq, SincInterpolator};
+pub use engine::{AudioCoreEvent, AudioLoop, BeatJump, Deck, PacemakerMixer};
 pub use firmware::{PfwInfo, detect_pacemaker_device};
+pub use metadata::{read_id3_safely, ParsedMetadata};

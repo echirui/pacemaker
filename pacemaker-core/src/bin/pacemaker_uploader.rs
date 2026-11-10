@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use pacemaker_core::firmware::{detect_pacemaker_device, PfwInfo};
-use pacemaker_core::hasher::generate_track_paths;
 
 #[derive(Parser)]
 #[command(name = "pacemaker-uploader")]

@@ -89,3 +89,57 @@ impl AudioLoop {
         current_time_ms
     }
 }
+
+/// Realtime quantized BeatJump processor.
+///
+/// Reconstructed from Tonium Pacemaker firmware `13606814` (`BeatJump`).
+/// Calculates quantized forward/backward beat displacements without drift.
+#[derive(Debug, Clone)]
+pub struct BeatJump;
+
+impl BeatJump {
+    /// Calculate target jump position in milliseconds.
+    ///
+    /// * `current_ms` - Current playhead position
+    /// * `bpm` - Beats per minute of current track
+    /// * `beats` - Number of beats to jump (positive = forward, negative = backward)
+    /// * `total_duration_ms` - Track duration limit to prevent jumping beyond track bounds
+    pub fn calculate_jump(
+        current_ms: TimeMs,
+        bpm: f64,
+        beats: f64,
+        total_duration_ms: TimeMs,
+    ) -> Result<TimeMs, &'static str> {
+        if bpm <= 20.0 || bpm > 350.0 {
+            return Err("Invalid BPM for beat jump");
+        }
+
+        let ms_per_beat = 60_000.0 / bpm;
+        let delta_ms = (beats * ms_per_beat).round() as TimeMs;
+        let target = current_ms + delta_ms;
+
+        // Strict clamp to prevent internal error / negative wrap (Issue #3)
+        let clamped = target.max(0).min(total_duration_ms);
+        Ok(clamped)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_beat_jump_calculations() {
+        // At 120 BPM, 1 beat = 500 ms
+        let pos = 10_000;
+        let jump_4_beats = BeatJump::calculate_jump(pos, 120.0, 4.0, 60_000).unwrap();
+        assert_eq!(jump_4_beats, 12_000); // 10000 + 2000 ms
+
+        let jump_back_2 = BeatJump::calculate_jump(pos, 120.0, -2.0, 60_000).unwrap();
+        assert_eq!(jump_back_2, 9_000); // 10000 - 1000 ms
+
+        // Out of bounds clamp
+        let jump_underflow = BeatJump::calculate_jump(500, 120.0, -4.0, 60_000).unwrap();
+        assert_eq!(jump_underflow, 0);
+    }
+}

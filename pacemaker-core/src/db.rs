@@ -10,6 +10,11 @@ pub struct PacemakerDb {
 impl PacemakerDb {
     pub fn open(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
+        // Prevent database is locked issues on slow FAT32 storage (Issue #1)
+        let _ = conn.execute_batch("
+            PRAGMA busy_timeout = 5000;
+            PRAGMA synchronous = NORMAL;
+        ");
         Ok(Self { conn })
     }
 
@@ -141,6 +146,51 @@ impl PacemakerDb {
             "UPDATE tracks SET loop_in = ?1, loop_out = ?2, date_modified = ?3 WHERE track_id = ?4",
             params![loop_in_ms, loop_out_ms, chrono_now_ms(), track_id],
         )?;
+        Ok(())
+    }
+
+    /// Safely writes back analysis results (BPM, CUE, loop points, KEY)
+    /// into SQLite with atomic commits, preventing the silent data drop observed
+    /// in Tonium firmware `pmplayer` (TrackAnalyzer exception swallowing - Issue #1).
+    pub fn write_analysis_result(
+        &mut self,
+        track_id: TrackId,
+        bpm: Option<f64>,
+        cue_point: Option<TimeMs>,
+        loop_in: Option<TimeMs>,
+        loop_out: Option<TimeMs>,
+        key: Option<&str>,
+    ) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        let now = chrono_now_ms();
+
+        if let Some(b) = bpm {
+            let ind_b = ((b / 10.0).floor() as i64) * 10;
+            tx.execute(
+                "UPDATE tracks SET bpm = ?1, ind_bpm = ?2, date_modified = ?3 WHERE track_id = ?4",
+                params![b, ind_b, now, track_id],
+            )?;
+        }
+        if let Some(cue) = cue_point {
+            tx.execute(
+                "UPDATE tracks SET cue_point = ?1, date_modified = ?2 WHERE track_id = ?3",
+                params![cue, now, track_id],
+            )?;
+        }
+        if let (Some(l_in), Some(l_out)) = (loop_in, loop_out) {
+            tx.execute(
+                "UPDATE tracks SET loop_in = ?1, loop_out = ?2, date_modified = ?3 WHERE track_id = ?4",
+                params![l_in, l_out, now, track_id],
+            )?;
+        }
+        if let Some(k) = key {
+            tx.execute(
+                "UPDATE tracks SET key = ?1, date_modified = ?2 WHERE track_id = ?3",
+                params![k, now, track_id],
+            )?;
+        }
+
+        tx.commit()?;
         Ok(())
     }
 
