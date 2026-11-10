@@ -1,0 +1,18 @@
+#!/bin/sh
+
+. /etc/profile
+
+case "$1" in
+  start)
+    echo "Starting pm services: \n"
+
+    /usr/local/bin/pwrLauncherApp&
+	   
+    ;;
+  stop)
+    echo "Shutting down pm services: \n"
+    ;;
+  *)
+    echo "Usage: pm {start|stop}"
+    exit 1
+esac

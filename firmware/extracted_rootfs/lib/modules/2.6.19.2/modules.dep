@@ -1,0 +1,25 @@
+/lib/modules/2.6.19.2/kernel/drivers/usb/gadget/g_file_storage.ko: /lib/modules/2.6.19.2/kernel/drivers/usb/gadget/arcotg_udc.ko
+/lib/modules/2.6.19.2/kernel/drivers/usb/storage/usb-storage.ko: 
+/lib/modules/2.6.19.2/kernel/drivers/usb/otg/isp1504_arc.ko: 
+/lib/modules/2.6.19.2/kernel/drivers/usb/gadget/arcotg_udc.ko: 
+/lib/modules/2.6.19.2/kernel/drivers/usb/input/usbmouse.ko: 
+/lib/modules/2.6.19.2/kernel/fs/autofs4/autofs4.ko: 
+/lib/modules/2.6.19.2/kernel/drivers/usb/host/ehci-hcd.ko: 
+/lib/modules/2.6.19.2/kernel/drivers/usb/input/usbhid.ko: 
+/lib/modules/2.6.19.2/kernel/drivers/usb/gadget/gadgetfs.ko: /lib/modules/2.6.19.2/kernel/drivers/usb/gadget/arcotg_udc.ko
+/lib/modules/2.6.19.2/kernel/drivers/usb/input/usbkbd.ko: 
+/lib/modules/2.6.19.2/kernel/drivers/ide/ide-core.ko: 
+/lib/modules/2.6.19.2/kernel/drivers/usb/gadget/g_ether.ko: /lib/modules/2.6.19.2/kernel/drivers/usb/gadget/arcotg_udc.ko
+/lib/modules/2.6.19.2/kernel/drivers/input/misc/pmic_input.ko: 
+/lib/modules/2.6.19.2/kernel/fs/nls/nls_utf8.ko: 
+/lib/modules/2.6.19.2/kernel/fs/smbfs/smbfs.ko: 
+/lib/modules/2.6.19.2/kernel/drivers/char/fusion/fusion.ko: 
+/lib/modules/2.6.19.2/kernel/drivers/ide/ide-disk.ko: /lib/modules/2.6.19.2/kernel/drivers/ide/ide-core.ko
+/lib/modules/2.6.19.2/kernel/lib/crc-ccitt.ko: 
+/lib/modules/2.6.19.2/kernel/fs/nls/nls_ascii.ko: 
+/lib/modules/2.6.19.2/kernel/drivers/ide/arm/mxc_ide.ko: /lib/modules/2.6.19.2/kernel/drivers/ide/ide-core.ko
+/lib/modules/2.6.19.2/kernel/drivers/base/firmware_class.ko: 
+/lib/modules/2.6.19.2/kernel/drivers/input/keyboard/mxc_keyb.ko: 
+/lib/modules/2.6.19.2/kernel/drivers/input/evrout.ko: /lib/modules/2.6.19.2/kernel/drivers/ide/ide-core.ko
+/lib/modules/2.6.19.2/kernel/drivers/ide/ide-generic.ko: /lib/modules/2.6.19.2/kernel/drivers/ide/ide-core.ko
+/lib/modules/2.6.19.2/kernel/drivers/char/fusion/fusion.ko:

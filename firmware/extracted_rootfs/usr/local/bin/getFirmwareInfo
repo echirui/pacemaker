@@ -1,0 +1,19 @@
+#!/bin/sh
+
+echo ""
+#examine the current Image status
+. /usr/local/bin/swGetStatus
+
+echo ""
+echo "Flash bank:" $BANK
+echo "Status flag:" $STATUS
+echo "Upgrade flag:" $UPGRADE
+
+echo ""
+cat /etc/ltib-release
+
+echo ""
+cat /etc/svn-release
+
+echo ""
+cat /etc/svn-status

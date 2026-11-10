@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# Changes the processor frequency using DPM.
+# valid parameters are 532, 266, and 133.
+#
+# "dpm_init start" must be run before using this command.
+
+echo set_policy $1 > /proc/driver/dpm/cmd
+exit 0

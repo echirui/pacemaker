@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# Suspend the processor using DPM.
+#
+# "dpm_init start" must be run before using this command.
+
+echo set_policy stop > /proc/driver/dpm/cmd
+echo set_policy 532 > /proc/driver/dpm/cmd
+exit 0

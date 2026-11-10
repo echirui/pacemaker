@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenPacemaker Editor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="brand">
+          <span class="logo-icon">🎛️</span>
+          <span class="logo-text">OpenPacemaker <span>Editor</span></span>
+        </div>
+        <div id="deviceStatus" class="device-badge badge-offline">
+          <span class="dot"></span>
+          <span id="deviceText">Checking device...</span>
+        </div>
+      </div>
+
+      <div class="header-center">
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="searchInput" placeholder="楽曲、アーティスト、アルバムを検索...">
+          <button id="clearSearch" class="btn-clear hidden">×</button>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <label class="btn btn-primary btn-import" for="fileInput">
+          <span>＋ 楽曲を追加</span>
+        </label>
+        <input type="file" id="fileInput" multiple accept="audio/*,.mp3,.m4a,.wav,.flac,.aiff" style="display:none;">
+      </div>
+    </header>
+
+    <!-- Top Deck Player -->
+    <section class="deck-container" id="deckContainer">
+      <div class="deck-meta">
+        <div class="deck-track-info">
+          <div class="deck-title-row">
+            <h2 id="deckTitle" class="deck-title">トラックを選択してください</h2>
+            <button id="btnEditCurrentTrack" class="btn-icon btn-edit-track hidden" title="楽曲情報を編集">✏️ 編集</button>
+          </div>
+          <p id="deckArtist" class="deck-artist">-</p>
+        </div>
+        <div class="deck-stats">
+          <span id="deckBpm" class="stat-pill">BPM: --</span>
+          <span id="deckKey" class="stat-pill">KEY: --</span>
+          <span id="deckTime" class="stat-pill">0:00 / 0:00</span>
+        </div>
+      </div>
+
+      <!-- Waveform / Canvas -->
+      <div class="waveform-wrapper" id="waveformWrapper">
+        <canvas id="waveformCanvas"></canvas>
+        <div class="cue-marker hidden" id="cueMarker"><span>CUE</span></div>
+        <div class="loop-region hidden" id="loopRegion">
+          <div class="loop-in-marker"><span>IN</span></div>
+          <div class="loop-out-marker"><span>OUT</span></div>
+        </div>
+        <div class="playhead" id="playhead"></div>
+      </div>
+
+      <!-- DJ Controls -->
+      <div class="deck-controls">
+        <div class="control-group">
+          <button id="btnPlay" class="btn btn-ctrl btn-play" disabled>▶ 再生</button>
+          <button id="btnJumpCue" class="btn btn-ctrl" disabled>⏮ CUE</button>
+        </div>
+
+        <div class="control-group">
+          <button id="btnSetCue" class="btn btn-ctrl btn-cue" disabled>Set CUE</button>
+          <button id="btnSetLoopIn" class="btn btn-ctrl" disabled>Loop IN</button>
+          <button id="btnSetLoopOut" class="btn btn-ctrl" disabled>Loop OUT</button>
+          <button id="btnToggleLoop" class="btn btn-ctrl" disabled>Loop OFF</button>
+          <button id="btnSaveMarkers" class="btn btn-save" disabled>💾 Pacemakerへ保存</button>
+        </div>
+
+        <div class="control-group volume-group">
+          <span>🔊</span>
+          <input type="range" id="volumeSlider" min="0" max="1" step="0.05" value="0.9">
+        </div>
+      </div>
+      <audio id="audioElement" preload="none"></audio>
+    </section>
+
+    <!-- Main Content: Sidebar + Track List -->
+    <main class="main-body">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-section">
+          <h3>ライブラリ</h3>
+          <ul class="nav-list">
+            <li class="active" data-filter="all">
+              <span class="icon">🎵</span>
+              <span class="label">すべての楽曲</span>
+              <span class="count" id="allTracksCount">0</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="section-header">
+            <h3>プレイリスト (Cases)</h3>
+            <button id="btnNewCase" class="btn-icon" title="新規Case作成">＋</button>
+          </div>
+          <ul class="nav-list" id="caseList">
+            <!-- Dynamic cases list -->
+          </ul>
+        </div>
+
+        <div class="sidebar-section storage-info" id="storageBox">
+          <div class="storage-header">
+            <h3>ストレージ</h3>
+            <span id="storagePercent" class="storage-pct">--</span>
+          </div>
+          <div class="meter-bar">
+            <div id="storageFill" class="meter-fill" style="width: 0%"></div>
+          </div>
+          <div class="storage-details">
+            <p id="storageText">計算中...</p>
+            <p id="storageSubText" class="storage-sub"></p>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Track List Table -->
+      <section class="track-pane">
+        <div class="table-container">
+          <table class="track-table">
+            <thead>
+              <tr>
+                <th style="width: 48px;">#</th>
+                <th data-sort="title">タイトル ↕</th>
+                <th data-sort="artist">アーティスト ↕</th>
+                <th data-sort="album">アルバム ↕</th>
+                <th data-sort="bpm" style="width: 80px;">BPM ↕</th>
+                <th data-sort="play_time_secs" style="width: 70px;">時間 ↕</th>
+                <th style="width: 90px;">CUE / LOOP</th>
+                <th style="width: 90px;">操作</th>
+              </tr>
+            </thead>
+            <tbody id="trackTableBody">
+              <tr>
+                <td colspan="8" class="empty-state">読み込み中...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- Drag & Drop Overlay -->
+    <div id="dropOverlay" class="drop-overlay hidden">
+      <div class="drop-card">
+        <span class="drop-icon">📥</span>
+        <h2>ここにオーディオファイルをドロップ</h2>
+        <p>Tonium Pacemaker へ自動登録 & 転送します (MP3, AAC, M4A, WAV, FLAC)</p>
+      </div>
+    </div>
+
+    <!-- Track Info Edit Modal -->
+    <div id="editModal" class="modal-overlay hidden">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-icon">🎵</span>
+            <h3 class="modal-title">楽曲情報の編集</h3>
+          </div>
+          <button type="button" id="btnModalClose" class="btn-icon btn-modal-close" title="閉じる">×</button>
+        </div>
+        <form id="editTrackForm" class="modal-body">
+          <input type="hidden" id="editTrackId">
+          
+          <div class="form-row">
+            <div class="form-group flex-2">
+              <label for="editTitle">タイトル *</label>
+              <input type="text" id="editTitle" required placeholder="曲名">
+            </div>
+            <div class="form-group flex-2">
+              <label for="editArtist">アーティスト *</label>
+              <input type="text" id="editArtist" required placeholder="アーティスト名">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-2">
+              <label for="editAlbum">アルバム</label>
+              <input type="text" id="editAlbum" placeholder="アルバム名">
+            </div>
+            <div class="form-group flex-1">
+              <label for="editGenre">ジャンル</label>
+              <input type="text" id="editGenre" placeholder="Rock, EDM...">
+            </div>
+            <div class="form-group flex-1">
+              <label for="editYear">年</label>
+              <input type="number" id="editYear" min="1900" max="2099" placeholder="2008">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="editBpm">BPM</label>
+              <input type="number" id="editBpm" step="0.01" min="20" max="300" placeholder="128.0">
+            </div>
+            <div class="form-group flex-1">
+              <label for="editKey">KEY</label>
+              <input type="text" id="editKey" placeholder="8A, Am, ...">
+            </div>
+            <div class="form-group flex-2">
+              <label for="editLocation">ストレージ内パス (参照専用)</label>
+              <input type="text" id="editLocation" readonly class="input-readonly">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="editComments">コメント / メモ</label>
+            <input type="text" id="editComments" placeholder="メモ・タグ情報など">
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" id="btnModalCancel" class="btn btn-secondary">キャンセル</button>
+            <button type="submit" id="btnModalSave" class="btn btn-primary">💾 Pacemakerへ保存</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Confirmation Modal (Replaces blocked window.confirm) -->
+    <div id="confirmModal" class="modal-overlay hidden">
+      <div class="modal-dialog modal-dialog-sm">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-icon" id="confirmModalIcon">⚠️</span>
+            <h3 class="modal-title" id="confirmModalTitle">確認</h3>
+          </div>
+          <button type="button" id="btnConfirmCancelX" class="btn-icon btn-modal-close">×</button>
+        </div>
+        <div class="modal-body">
+          <p id="confirmModalMessage" class="modal-message"></p>
+          <div class="modal-footer">
+            <button type="button" id="btnConfirmCancel" class="btn btn-secondary">キャンセル</button>
+            <button type="button" id="btnConfirmOk" class="btn btn-danger">削除する</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Prompt Input Modal (Replaces blocked window.prompt) -->
+    <div id="promptModal" class="modal-overlay hidden">
+      <div class="modal-dialog modal-dialog-sm">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-icon">📁</span>
+            <h3 class="modal-title" id="promptModalTitle">入力</h3>
+          </div>
+          <button type="button" id="btnPromptCancelX" class="btn-icon btn-modal-close">×</button>
+        </div>
+        <form id="promptForm" class="modal-body">
+          <div class="form-group">
+            <label id="promptModalLabel" for="promptInput">名前</label>
+            <input type="text" id="promptInput" required placeholder="名前を入力">
+          </div>
+          <div class="modal-footer">
+            <button type="button" id="btnPromptCancel" class="btn btn-secondary">キャンセル</button>
+            <button type="submit" id="btnPromptOk" class="btn btn-primary">作成</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

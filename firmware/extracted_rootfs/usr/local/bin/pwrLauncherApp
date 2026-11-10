@@ -1,0 +1,14 @@
+#!/bin/sh
+
+#dfbg -c ff000000
+
+ulimit -c unlimited
+echo "/mnt/public/.Pacemaker/dump/core.%e.%p" > /proc/sys/kernel/core_pattern
+
+#while [ 1 ]
+#do
+   pwrApplication
+#done
+
+
+exit 0

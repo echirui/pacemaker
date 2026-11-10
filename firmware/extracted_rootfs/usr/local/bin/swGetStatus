@@ -1,0 +1,5 @@
+#read current bank/status flags
+BANK=`dd bs=1 count=1 if=/dev/mtdblock1 2>/dev/null`
+STATUS=`dd bs=1 count=1 skip=1 if=/dev/mtdblock1 2>/dev/null`
+UPGRADE=`dd bs=1 count=1 skip=2 if=/dev/mtdblock1 2>/dev/null`
+ERROR=`dd bs=1 count=1 skip=3 if=/dev/mtdblock1 2>/dev/null`

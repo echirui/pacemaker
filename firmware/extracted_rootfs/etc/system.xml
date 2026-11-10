@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<PACE>
+  	<PRODUCTINFORMATION 
+  		SERIALNUMBER="%%serialnumber%%" 
+  		SWVERSION="%%swversion%%"
+  		FWVERSION="14142"
+	        BOOTLOADERVERSION="%%bootloaderversion%%"
+	        EDITOR_COMPATIBLE_FLAG="002"
+	/>
+</PACE>
+

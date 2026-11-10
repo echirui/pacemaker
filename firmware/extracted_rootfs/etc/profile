@@ -1,0 +1,6 @@
+export PS1='pacemaker# '
+export PATH=/pmds/bin:/usr/local/bin:/sbin:$PATH
+export LD_LIBRARY_PATH=/pmds/lib:/usr/local/lib:$LD_LIBRARY_PATH
+export JUCE_FONT_PATH=/pmds/share/fonts,/usr/local/share/fonts
+alias ll='ls -l'
+ 

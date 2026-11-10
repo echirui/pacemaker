@@ -1,0 +1,11 @@
+#!/bin/sh
+
+#create ramdisk
+mount -t tmpfs /dev/ram0 /mnt/pmds
+
+#create vfat
+dd if=/dev/zero of="/mnt/pmds/filesystem" bs=1k count=60000
+/sbin/losetup /dev/loop/2 /mnt/pmds/filesystem
+mkdosfs -F 32 -n Pacemaker /dev/loop/2 
+#start file storage
+modprobe g_file_storage file=/dev/loop/2 removable=1 stall=0

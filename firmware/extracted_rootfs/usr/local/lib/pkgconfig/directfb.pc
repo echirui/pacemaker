@@ -1,0 +1,11 @@
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: DirectFB
+Description: Graphics and windowing library for the Linux frame buffer device
+Version: 1.0.1
+Requires: fusion direct
+Libs: -L${libdir} -ldirectfb -lpthread -ldl -lz 
+Cflags: -D_REENTRANT -I${prefix}/include/directfb

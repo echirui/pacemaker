@@ -1,0 +1,20 @@
+export HOSTNAME=freescale
+export INTERFACE=eth0
+export IPADDR=
+export NETMASK=255.255.255.0
+export BROADCAST=192.168.0.255
+export GATEWAY=192.168.0.1
+export NAMESERVER=192.168.0.1
+export NTP_SERVER=ntp.cs.strath.ac.uk
+export MODLIST=""
+export RAMDIRS=""
+export TMPFS="ramfs"
+export READONLY_FS="n"
+export SYSLOG_SOCKET_FILE=""
+export SYSCFG_DHCPC_CMD="udhcpc -b -i"
+
+all_services="hostname filesystems syslog depmod modules network settime inetd portmap dropbear boa dhcpd"
+all_services_r="dhcpd boa dropbear portmap inetd settime network modules depmod syslog filesystems hostname"
+cfg_services="hostname filesystems syslog depmod modules network settime inetd portmap dropbear boa dhcpd"
+cfg_services_r="dhcpd boa dropbear portmap inetd settime network modules depmod syslog filesystems hostname"
+

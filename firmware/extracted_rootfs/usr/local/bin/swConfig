@@ -1,0 +1,8 @@
+
+#partitions
+REDBOOTBLOCK="/dev/mtd/0"
+KERNELBLOCKA="/dev/mtd/2"
+KERNELBLOCKB="/dev/mtd/3"
+ROOTFSBLOCKA="/dev/mtd/4"
+ROOTFSBLOCKB="/dev/mtd/5"
+
