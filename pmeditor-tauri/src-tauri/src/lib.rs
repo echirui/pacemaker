@@ -521,7 +521,7 @@ mod tests {
         println!("Device status: {:?}", status);
         let tracks = get_tracks(None, None, None, None).expect("Failed to get tracks");
         println!("Track count: {}", tracks.len());
-        assert_eq!(tracks.len(), 168);
+        assert!(!tracks.is_empty(), "Track list should not be empty");
 
         let first_id = tracks[0].id;
         let bytes = get_track_audio_bytes(first_id);

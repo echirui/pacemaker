@@ -26,6 +26,29 @@ impl PacemakerMixer {
         }
     }
 
+    pub fn deck(&self, id: DeckId) -> &Deck {
+        match id {
+            DeckId::DeckA => &self.deck_a,
+            DeckId::DeckB => &self.deck_b,
+        }
+    }
+
+    pub fn deck_mut(&mut self, id: DeckId) -> &mut Deck {
+        match id {
+            DeckId::DeckA => &mut self.deck_a,
+            DeckId::DeckB => &mut self.deck_b,
+        }
+    }
+
+    pub fn set_crossfader(&mut self, norm_position: f32) {
+        // Map [0.0, 1.0] to [-1.0, +1.0] for internal CompoundCrossfader
+        self.crossfader.position = (norm_position.clamp(0.0, 1.0) * 2.0) - 1.0;
+    }
+
+    pub fn crossfader_gains(&self) -> (f32, f32) {
+        self.crossfader.calculate_gains()
+    }
+
     pub fn handle_event(&mut self, event: AudioCoreEvent) {
         match event {
             AudioCoreEvent::LoadTrack { deck: _, track_id: _ } => {
