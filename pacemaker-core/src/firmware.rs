@@ -337,7 +337,23 @@ pub fn detect_pacemaker_device() -> Option<PathBuf> {
             if let Ok(entries) = fs::read_dir(volumes) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.join(".Pacemaker/system.xml").exists() || path.join("system.xml").exists() {
+                    let name_lower = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+                        .unwrap_or_default();
+
+                    // Skip internal system volume and hidden dirs
+                    if name_lower == "macintosh hd" || name_lower.starts_with('.') {
+                        continue;
+                    }
+
+                    if name_lower == "pacemaker"
+                        || path.join(".Pacemaker/music.db").exists()
+                        || path.join(".Pacemaker/system.xml").exists()
+                        || path.join(".Pacemaker").is_dir()
+                        || path.join("system.xml").exists()
+                        || (name_lower.contains("pacemaker") && path.join("music.db").exists())
+                    {
                         return Some(path);
                     }
                 }
@@ -347,11 +363,14 @@ pub fn detect_pacemaker_device() -> Option<PathBuf> {
 
     #[cfg(target_os = "windows")]
     {
-        // Check Windows drive letters A: through Z:
+        // Check Windows drive letters D: through Z:
         for drive in b'D'..=b'Z' {
             let drive_path = format!("{}:\\", drive as char);
             let path = PathBuf::from(&drive_path);
-            if path.join(".Pacemaker\\system.xml").exists() || path.join("system.xml").exists() {
+            if path.join(".Pacemaker\\system.xml").exists()
+                || path.join(".Pacemaker\\music.db").exists()
+                || path.join("system.xml").exists()
+            {
                 return Some(path);
             }
         }
@@ -365,8 +384,21 @@ pub fn detect_pacemaker_device() -> Option<PathBuf> {
                 if let Ok(entries) = fs::read_dir(base_path) {
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        if path.join(".Pacemaker/system.xml").exists() {
+                        if path.join(".Pacemaker/system.xml").exists()
+                            || path.join(".Pacemaker/music.db").exists()
+                        {
                             return Some(path);
+                        }
+                        // Check subdirectories (e.g. /media/$USER/Pacemaker)
+                        if let Ok(sub_entries) = fs::read_dir(&path) {
+                            for sub in sub_entries.flatten() {
+                                let sub_path = sub.path();
+                                if sub_path.join(".Pacemaker/system.xml").exists()
+                                    || sub_path.join(".Pacemaker/music.db").exists()
+                                {
+                                    return Some(sub_path);
+                                }
+                            }
                         }
                     }
                 }

@@ -157,6 +157,59 @@ async function callCommand(cmd, args = {}) {
   throw new Error('Tauri IPC Bridge not detected');
 }
 
+let isDeviceConnected = false;
+let isCheckingDevice = false;
+
+function resetDeckPlayer() {
+  if (audio) {
+    audio.pause();
+    audio.src = '';
+  }
+  deckTitle.textContent = '実機が未接続です';
+  deckArtist.textContent = '-';
+  deckBpm.textContent = 'BPM: --';
+  deckKey.textContent = 'KEY: --';
+  deckTime.textContent = '0:00 / 0:00';
+  btnPlay.disabled = true;
+  btnJumpCue.disabled = true;
+  btnSetCue.disabled = true;
+  btnSetLoopIn.disabled = true;
+  btnSetLoopOut.disabled = true;
+  btnToggleLoop.disabled = true;
+  btnSaveMarkers.disabled = true;
+  if (btnEditCurrentTrack) btnEditCurrentTrack.classList.add('hidden');
+  cueMarker.classList.add('hidden');
+  loopRegion.classList.add('hidden');
+  playhead.style.left = '0%';
+  currentWaveformPeaks = null;
+  drawWaveform();
+  activeTrack = null;
+}
+
+function renderDisconnectedState() {
+  trackTableBody.innerHTML = `
+    <tr>
+      <td colspan="8" class="empty-state">
+        <div style="padding: 56px 16px; text-align: center; color: #90a4ae;">
+          <div style="font-size: 48px; margin-bottom: 14px; opacity: 0.85;">🔌</div>
+          <h3 style="font-size: 18px; color: #eceff1; margin-bottom: 8px; font-weight: 600;">Pacemaker 実機が接続されていません</h3>
+          <p style="font-size: 13px; color: #78909c; max-width: 480px; margin: 0 auto 18px; line-height: 1.6;">
+            Tonium Pacemaker 本体をUSBケーブルでMacに接続してください。<br>
+            マスストレージ内の <code>.Pacemaker/music.db</code> を自動検出してライブラリを読み込みます。
+          </p>
+          <button id="btnCheckDevice" class="btn btn-ctrl" style="padding: 8px 20px; font-size: 13px; cursor: pointer; border: 1px solid #00bcd4; color: #00bcd4;">🔄 接続を再確認</button>
+        </div>
+      </td>
+    </tr>
+  `;
+  const btn = document.getElementById('btnCheckDevice');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      loadDeviceStatus();
+    });
+  }
+}
+
 async function boot() {
   console.log('[PacemakerEditor] Booting interface...');
   initAudio();
@@ -164,12 +217,13 @@ async function boot() {
   initDragDrop();
   setupEvents();
 
-  // Load backend data in parallel
-  await Promise.allSettled([
-    loadDeviceStatus(),
-    loadCases(),
-    loadTracks()
-  ]);
+  // Initial check of physical device connection
+  await loadDeviceStatus();
+
+  // Background hardware connection polling (plug / unplug auto-detection)
+  setInterval(() => {
+    loadDeviceStatus();
+  }, 2500);
 }
 
 if (document.readyState === 'loading') {
@@ -195,11 +249,16 @@ function formatBytes(bytes) {
 }
 
 async function loadDeviceStatus() {
+  if (isCheckingDevice) return;
+  isCheckingDevice = true;
+
   try {
-    deviceText.textContent = 'Pacemaker 接続確認中...';
     const data = await callCommand('get_device_status');
 
     if (data && data.connected) {
+      const wasDisconnected = !isDeviceConnected;
+      isDeviceConnected = true;
+
       deviceStatus.className = 'device-badge badge-online';
       deviceText.textContent = `Pacemaker (FW ${data.fw_version || '1.0'})`;
       const total = data.total_bytes || 120000000000;
@@ -211,25 +270,56 @@ async function loadDeviceStatus() {
       if (storagePercent) storagePercent.textContent = `${pct < 0.1 && used > 0 ? '< 0.1%' : pct.toFixed(1) + '%'}`;
       if (storageText) storageText.textContent = `空き ${formatBytes(free)} / ${formatBytes(total)}`;
       if (storageSubText) storageSubText.textContent = `使用中: ${formatBytes(used)}`;
+
+      // If the device just got connected, trigger data loading
+      if (wasDisconnected) {
+        deckTitle.textContent = 'トラックを選択してください';
+        await Promise.allSettled([loadCases(), loadTracks()]);
+      }
     } else {
+      const wasConnected = isDeviceConnected;
+      isDeviceConnected = false;
+
       deviceStatus.className = 'device-badge badge-offline';
       deviceText.textContent = 'Pacemaker 未接続';
       if (storageFill) storageFill.style.width = '0%';
       if (storagePercent) storagePercent.textContent = '--';
       if (storageText) storageText.textContent = 'ストレージ未検出';
-      if (storageSubText) storageSubText.textContent = '';
+      if (storageSubText) storageSubText.textContent = '実機USBケーブルを接続してください';
+
+      caseList.innerHTML = '<li class="empty-state-small" style="padding: 10px 14px; color: #78909c; font-size: 12px; font-style: italic;">実機未接続</li>';
+      allTracksCount.textContent = '0';
+      currentTracks = [];
+
+      renderDisconnectedState();
+
+      if (wasConnected) {
+        resetDeckPlayer();
+      }
     }
   } catch (e) {
     console.error('Failed to load device status:', e);
+    isDeviceConnected = false;
     deviceStatus.className = 'device-badge badge-offline';
     deviceText.textContent = 'オフライン (未接続)';
     if (storagePercent) storagePercent.textContent = '--';
     if (storageText) storageText.textContent = '未検出';
     if (storageSubText) storageSubText.textContent = '';
+    caseList.innerHTML = '<li class="empty-state-small" style="padding: 10px 14px; color: #78909c; font-size: 12px; font-style: italic;">実機未接続</li>';
+    allTracksCount.textContent = '0';
+    currentTracks = [];
+    renderDisconnectedState();
+    resetDeckPlayer();
+  } finally {
+    isCheckingDevice = false;
   }
 }
 
 async function loadCases() {
+  if (!isDeviceConnected) {
+    caseList.innerHTML = '<li class="empty-state-small" style="padding: 10px 14px; color: #78909c; font-size: 12px; font-style: italic;">実機未接続</li>';
+    return;
+  }
   try {
     const cases = await callCommand('get_cases');
     caseList.innerHTML = '';
@@ -263,6 +353,10 @@ async function loadCases() {
 }
 
 async function deleteCase(caseId, name) {
+  if (!isDeviceConnected) {
+    showConfirmDialog('実機未接続', 'Pacemaker 実機が接続されていません。', '🔌', '了解');
+    return;
+  }
   const ok = await showConfirmDialog(
     'プレイリストの削除',
     `プレイリスト「${name}」を削除してもよろしいですか？`,
@@ -286,6 +380,13 @@ async function deleteCase(caseId, name) {
 }
 
 async function loadTracks() {
+  if (!isDeviceConnected) {
+    currentTracks = [];
+    allTracksCount.textContent = '0';
+    renderDisconnectedState();
+    return;
+  }
+
   try {
     trackTableBody.innerHTML = `<tr><td colspan="8" class="empty-state">トラック一覧を取得中...</td></tr>`;
     const search = searchInput.value.trim();
@@ -327,6 +428,11 @@ async function loadTracks() {
 }
 
 function renderTrackTable(tracks) {
+  if (!isDeviceConnected) {
+    renderDisconnectedState();
+    return;
+  }
+
   if (!tracks || tracks.length === 0) {
     trackTableBody.innerHTML = `<tr><td colspan="8" class="empty-state">トラックが見つかりません</td></tr>`;
     return;
@@ -665,6 +771,7 @@ function generateLightweightBars(track, waveformData) {
 }
 
 async function selectTrack(track) {
+  if (!isDeviceConnected || !track) return;
   activeTrack = track;
   const trackId = track.id !== undefined ? track.id : track.track_id;
 
@@ -943,6 +1050,10 @@ function setupEvents() {
   });
 
   btnSaveMarkers.addEventListener('click', async () => {
+    if (!isDeviceConnected) {
+      showConfirmDialog('実機未接続', 'Pacemaker 実機が接続されていません。USBケーブルで実機を接続してください。', '🔌', '了解');
+      return;
+    }
     if (!activeTrack) return;
     const trackId = activeTrack.id !== undefined ? activeTrack.id : activeTrack.track_id;
     try {
@@ -959,6 +1070,10 @@ function setupEvents() {
   });
 
   btnNewCase.addEventListener('click', async () => {
+    if (!isDeviceConnected) {
+      showConfirmDialog('実機未接続', 'Pacemaker 実機が接続されていません。USBケーブルで実機を接続してください。', '🔌', '了解');
+      return;
+    }
     const name = await showPromptDialog('新規Case作成', 'プレイリスト名', '', '作成');
     if (!name || !name.trim()) return;
     try {
@@ -969,6 +1084,15 @@ function setupEvents() {
       alert('Case作成エラー: ' + (e.message || e));
     }
   });
+
+  if (fileInput) {
+    fileInput.addEventListener('click', (e) => {
+      if (!isDeviceConnected) {
+        e.preventDefault();
+        showConfirmDialog('実機未接続', 'Pacemaker 実機が接続されていません。USBケーブルで実機を接続してから楽曲を追加してください。', '🔌', '了解');
+      }
+    });
+  }
 
   let searchTimer = null;
   searchInput.addEventListener('input', () => {
@@ -1072,6 +1196,10 @@ function initDragDrop() {
   dropOverlay.addEventListener('drop', (e) => {
     e.preventDefault();
     dropOverlay.classList.add('hidden');
+    if (!isDeviceConnected) {
+      showConfirmDialog('実機未接続', 'Pacemaker 実機が接続されていません。USBケーブルで実機を接続してから楽曲を追加してください。', '🔌', '了解');
+      return;
+    }
   });
 }
 

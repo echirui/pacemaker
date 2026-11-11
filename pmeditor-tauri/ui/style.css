@@ -94,6 +94,15 @@ body {
   box-shadow: 0 0 8px var(--accent-green);
 }
 
+.badge-offline {
+  color: #ff5252;
+  background: rgba(255, 82, 82, 0.12);
+}
+.badge-offline .dot {
+  background: #ff5252;
+  box-shadow: 0 0 6px rgba(255, 82, 82, 0.6);
+}
+
 .search-box {
   position: relative;
   width: 380px;

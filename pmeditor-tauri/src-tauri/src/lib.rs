@@ -21,50 +21,45 @@ pub struct DeviceStatusResponse {
 }
 
 fn resolve_pacemaker_volume() -> Option<PathBuf> {
+    // 1. Detect actual physical hardware device across mounted external volumes
     if let Some(dev) = detect_pacemaker_device() {
         return Some(dev);
     }
-    // Check known locations
-    let candidates = [
+
+    // 2. Explicit standard mounted volume paths for Pacemaker hardware
+    let standard_mounts = [
         "/Volumes/Pacemaker",
         "/Volumes/PACEMAKER",
-        "/tmp/Pacemaker",
-        "/Users/echirui/work/pacemaker",
-        "/Users/echirui/work/peacemaker",
-        ".",
     ];
-    for cand in &candidates {
+    for cand in &standard_mounts {
         let p = PathBuf::from(cand);
-        if p.join(".Pacemaker/music.db").exists() || p.join("music.db").exists() {
+        if p.exists() && (p.join(".Pacemaker/music.db").exists() || p.join(".Pacemaker/system.xml").exists() || p.join("music.db").exists()) {
             return Some(p);
         }
     }
+
+    // 3. ONLY allow developer mock testing if explicitly opted in via environment variable
+    if std::env::var("PACEMAKER_MOCK").unwrap_or_default() == "1" {
+        for cand in &["/tmp/Pacemaker", ".", "..", "../.."] {
+            let p = PathBuf::from(cand);
+            if p.join(".Pacemaker/music.db").exists() || p.join("music.db").exists() {
+                return Some(p);
+            }
+        }
+    }
+
     None
 }
 
 fn resolve_pacemaker_db_path() -> Option<PathBuf> {
-    if let Some(vol) = resolve_pacemaker_volume() {
-        let p = vol.join(".Pacemaker/music.db");
-        if p.exists() {
-            return Some(p);
-        }
-        let p_root = vol.join("music.db");
-        if p_root.exists() {
-            return Some(p_root);
-        }
+    let vol = resolve_pacemaker_volume()?;
+    let p = vol.join(".Pacemaker/music.db");
+    if p.exists() {
+        return Some(p);
     }
-    for cand in &[
-        "/Users/echirui/work/pacemaker/music.db",
-        "/Users/echirui/work/peacemaker/music.db",
-        "/tmp/Pacemaker/.Pacemaker/music.db",
-        "/tmp/Pacemaker/music.db",
-        "music.db",
-        "../music.db",
-    ] {
-        let p = PathBuf::from(cand);
-        if p.exists() {
-            return Some(p);
-        }
+    let p_root = vol.join("music.db");
+    if p_root.exists() {
+        return Some(p_root);
     }
     None
 }
@@ -81,7 +76,7 @@ fn resolve_track_file_path(virtual_location: &str) -> Option<PathBuf> {
         virtual_location
     };
 
-    let vol = resolve_pacemaker_volume().unwrap_or_else(|| PathBuf::from("."));
+    let vol = resolve_pacemaker_volume()?;
     let candidates = [
         vol.join(".Pacemaker/Music").join(clean),
         vol.join("Music").join(clean),
@@ -107,14 +102,25 @@ fn get_device_status() -> DeviceStatusResponse {
     let vol_opt = resolve_pacemaker_volume();
     if let Some(ref path) = vol_opt {
         let sys_xml_path = path.join(".Pacemaker/system.xml");
+        let sys_xml_root = path.join("system.xml");
         let mut fw = "14142".to_string();
         let mut sw = "0514142".to_string();
         let mut serial = "PM-DEV-001".to_string();
 
-        if let Ok(xml) = fs::read_to_string(&sys_xml_path) {
-            if let Some(s) = extract_tag(&xml, "FWVERSION") { fw = s; }
-            if let Some(s) = extract_tag(&xml, "SWVERSION") { sw = s; }
-            if let Some(s) = extract_tag(&xml, "SERIALNUMBER") { serial = s; }
+        let xml_target = if sys_xml_path.exists() {
+            Some(sys_xml_path)
+        } else if sys_xml_root.exists() {
+            Some(sys_xml_root)
+        } else {
+            None
+        };
+
+        if let Some(ref xp) = xml_target {
+            if let Ok(xml) = fs::read_to_string(xp) {
+                if let Some(s) = extract_tag(&xml, "FWVERSION") { fw = s; }
+                if let Some(s) = extract_tag(&xml, "SWVERSION") { sw = s; }
+                if let Some(s) = extract_tag(&xml, "SERIALNUMBER") { serial = s; }
+            }
         }
 
         // Get filesystem capacity if possible
@@ -179,12 +185,12 @@ where
     F: FnOnce(&mut PacemakerDb) -> Result<R, String>,
 {
     let db_path = resolve_pacemaker_db_path()
-        .ok_or_else(|| "Pacemaker music.db not found. Connect Pacemaker device.".to_string())?;
+        .ok_or_else(|| "Pacemaker ハードウェアが接続されていません。USBケーブルで実機を接続してください。".to_string())?;
 
     let mut cache = DB_CACHE.lock().map_err(|e| e.to_string())?;
 
     let need_open = match &*cache {
-        Some((path, _)) => path != &db_path,
+        Some((path, _)) => path != &db_path || !path.exists(),
         None => true,
     };
 
@@ -210,6 +216,9 @@ fn get_tracks(
     sort_by: Option<String>,
     sort_order: Option<String>,
 ) -> Result<Vec<TrackMetadata>, String> {
+    if resolve_pacemaker_volume().is_none() {
+        return Ok(Vec::new());
+    }
     with_db(|db| {
         db.get_tracks(
             search.as_deref(),
@@ -223,6 +232,9 @@ fn get_tracks(
 
 #[command]
 fn get_cases() -> Result<Vec<CaseItem>, String> {
+    if resolve_pacemaker_volume().is_none() {
+        return Ok(Vec::new());
+    }
     with_db(|db| db.get_cases().map_err(|e| format!("Cases error: {}", e)))
 }
 
@@ -495,20 +507,39 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_device_status_and_tracks() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        std::env::set_var("PACEMAKER_MOCK", "1");
         let status = get_device_status();
         println!("Device status: {:?}", status);
         let tracks = get_tracks(None, None, None, None).expect("Failed to get tracks");
         println!("Track count: {}", tracks.len());
-        assert!(!tracks.is_empty(), "Track list should not be empty");
+        assert!(!tracks.is_empty(), "Track list should not be empty with PACEMAKER_MOCK=1");
 
         let first_id = tracks[0].id;
         let bytes = get_track_audio_bytes(first_id);
         println!("Track {} audio bytes: {:?}", first_id, bytes.as_ref().map(|b| b.len()));
         if let Ok(b) = bytes {
             assert!(b.len() > 10_000);
+        }
+        std::env::remove_var("PACEMAKER_MOCK");
+    }
+
+    #[test]
+    fn test_disconnected_behavior() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        std::env::remove_var("PACEMAKER_MOCK");
+        if resolve_pacemaker_volume().is_none() {
+            let status = get_device_status();
+            assert!(!status.connected, "Device status should report disconnected when not mounted");
+            let tracks = get_tracks(None, None, None, None).expect("get_tracks should succeed with empty list");
+            assert!(tracks.is_empty(), "When disconnected, track list must be empty");
+            let cases = get_cases().expect("get_cases should succeed with empty list");
+            assert!(cases.is_empty(), "When disconnected, case list must be empty");
         }
     }
 }
