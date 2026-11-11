@@ -22,6 +22,20 @@ impl AudioProcessBuffer {
         }
     }
 
+    /// Pre-allocates or resizes buffer in place without creating new allocations during playback
+    pub fn ensure_capacity(&mut self, channels: usize, samples: usize) {
+        self.channels = channels;
+        self.samples_per_channel = samples;
+        if self.data.len() < channels {
+            self.data.resize_with(channels, || Vec::with_capacity(samples));
+        }
+        for ch in &mut self.data {
+            if ch.len() < samples {
+                ch.resize(samples, 0.0);
+            }
+        }
+    }
+
     /// Add from another buffer with gain scaling (matching `addFrom`)
     pub fn add_from(&mut self, other: &AudioProcessBuffer, gain: f32) {
         let ch_count = self.channels.min(other.channels);

@@ -775,7 +775,7 @@ async function selectTrack(track) {
   activeTrack = track;
   const trackId = track.id !== undefined ? track.id : track.track_id;
 
-  // Ultra-Low Memory: Toggle class directly without recreating entire table DOM
+  // Toggle active class directly without recreating entire table DOM
   document.querySelectorAll('.track-table tbody tr').forEach(r => {
     r.classList.toggle('active-track', r.dataset.trackId === String(trackId));
   });
@@ -789,7 +789,7 @@ async function selectTrack(track) {
   deckTime.textContent = '0:00 / 0:00';
 
   deckTitle.textContent = track.title || 'Unknown Title';
-  deckArtist.textContent = 'ストリーミング準備中...';
+  deckArtist.textContent = '音声 & 波形データを読み込み中...';
   if (btnEditCurrentTrack) btnEditCurrentTrack.classList.remove('hidden');
   deckBpm.textContent = `BPM: ${track.bpm ? Number(track.bpm).toFixed(1) : '--'}`;
   deckKey.textContent = `KEY: ${track.key || '--'}`;
@@ -799,18 +799,10 @@ async function selectTrack(track) {
   loopOutMs = track.loop_out_ms ?? track.loop_out ?? -1;
   loopEnabled = false;
 
-  // Free previous audio blob memory immediately
-  if (currentBlobUrl) {
-    URL.revokeObjectURL(currentBlobUrl);
-    currentBlobUrl = null;
-  }
+  currentWaveformPeaks = null;
+  drawWaveform();
 
-  // Ultra-Low Memory Mode: Stream directly via pmaudio custom scheme
-  // Eliminates 15MB file buffer and 85MB raw PCM allocation in JavaScript RAM (<2MB stream buffer)
-  audio.src = `pmaudio://localhost/tracks/${trackId}`;
-  audio.load();
-
-  // Try fetching lightweight proprietary .str waveform data (<1 KB)
+  // Try fetching proprietary .str waveform data
   waveformData = null;
   try {
     waveformData = await callCommand('get_waveform_data', { trackId: Number(trackId) });
@@ -818,12 +810,46 @@ async function selectTrack(track) {
     // No .str file
   }
 
-  // Generate ultra-compact 500-bar envelope (only ~6 KB memory)
-  currentWaveformPeaks = generateLightweightBars(track, waveformData);
-  drawWaveform();
+  // Free previous audio blob memory immediately
+  if (currentBlobUrl) {
+    URL.revokeObjectURL(currentBlobUrl);
+    currentBlobUrl = null;
+  }
 
-  deckArtist.textContent = track.artist || 'Unknown Artist';
-  btnPlay.disabled = false;
+  try {
+    const rawBytes = await callCommand('get_track_audio_bytes', { trackId: Number(trackId) });
+    const uint8 = rawBytes instanceof Uint8Array ? rawBytes : new Uint8Array(rawBytes);
+    const arrayBuffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength);
+
+    const loc = track.virtual_location || '';
+    const ext = loc.split('.').pop().toLowerCase();
+    let mime = 'audio/mpeg';
+    if (ext === 'm4a' || ext === 'mp4') mime = 'audio/mp4';
+    else if (ext === 'wav') mime = 'audio/wav';
+    else if (ext === 'flac') mime = 'audio/flac';
+    else if (ext === 'aif' || ext === 'aiff') mime = 'audio/aiff';
+
+    const blob = new Blob([uint8], { type: mime });
+    currentBlobUrl = URL.createObjectURL(blob);
+    audio.src = currentBlobUrl;
+    audio.load();
+
+    // Decode real audio samples to produce high-definition 700-bar waveform
+    currentWaveformPeaks = await extractWaveformPeaks(arrayBuffer);
+    drawWaveform();
+
+    deckArtist.textContent = track.artist || 'Unknown Artist';
+    btnPlay.disabled = false;
+  } catch (err) {
+    console.error('Audio load error:', err);
+    // Fallback: Stream via pmaudio custom scheme
+    audio.src = `pmaudio://localhost/tracks/${trackId}`;
+    audio.load();
+    deckArtist.textContent = track.artist || 'Unknown Artist';
+    currentWaveformPeaks = generateFallbackBars(700);
+    drawWaveform();
+    btnPlay.disabled = false;
+  }
 
   btnJumpCue.disabled = false;
   btnSetCue.disabled = false;
@@ -869,7 +895,7 @@ function initAudio() {
 
     const pct = (audio.currentTime / audio.duration) * 100;
     playhead.style.left = `${pct}%`;
-    // Ultra-Low Memory / CPU: Playhead moves via CSS left without re-rasterizing 1,400 canvas rectangles
+    drawWaveform();
   });
 
   audio.addEventListener('loadedmetadata', () => {
@@ -883,12 +909,14 @@ function initAudio() {
 
   audio.addEventListener('pause', () => {
     btnPlay.textContent = '▶ 再生';
+    drawWaveform();
   });
 
   audio.addEventListener('ended', () => {
     btnPlay.textContent = '▶ 再生';
     audio.currentTime = 0;
     playhead.style.left = '0%';
+    drawWaveform();
   });
 
   volumeSlider.addEventListener('input', (e) => {
