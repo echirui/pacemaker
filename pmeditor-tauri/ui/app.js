@@ -73,13 +73,13 @@ const btnModalSave = document.getElementById('btnModalSave');
 const btnOpenYtModal = document.getElementById('btnOpenYtModal');
 const ytModal = document.getElementById('ytModal');
 const btnYtModalClose = document.getElementById('btnYtModalClose');
-const btnYtModalCancel = document.getElementById('btnYtModalCancel');
-const ytImportForm = document.getElementById('ytImportForm');
-const ytInputUrl = document.getElementById('ytInputUrl');
-const ytCaseName = document.getElementById('ytCaseName');
-const ytStatusBox = document.getElementById('ytStatusBox');
-const ytStatusText = document.getElementById('ytStatusText');
-const btnYtSubmit = document.getElementById('btnYtSubmit');
+const btnYtModalCloseBottom = document.getElementById('btnYtModalCloseBottom');
+const ytSearchForm = document.getElementById('ytSearchForm');
+const ytSearchInput = document.getElementById('ytSearchInput');
+const btnYtSearch = document.getElementById('btnYtSearch');
+const ytTargetCaseSelect = document.getElementById('ytTargetCaseSelect');
+const ytResultsContainer = document.getElementById('ytResultsContainer');
+const ytSearchResultsCount = document.getElementById('ytSearchResultsCount');
 
 // YouTube Dedicated Auth Modal Elements
 const btnOpenYtAuthModal = document.getElementById('btnOpenYtAuthModal');
@@ -346,6 +346,21 @@ function initYoutubeAuthHandlers() {
   }
 }
 
+function populateTargetCaseSelect() {
+  if (!ytTargetCaseSelect) return;
+  const currentVal = ytTargetCaseSelect.value;
+  ytTargetCaseSelect.innerHTML = '<option value="">ライブラリ全体のみ (Case指定なし)</option>';
+  if (Array.isArray(cases)) {
+    cases.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.name;
+      opt.textContent = `${c.name} (${c.track_count || 0}曲)`;
+      ytTargetCaseSelect.appendChild(opt);
+    });
+  }
+  if (currentVal) ytTargetCaseSelect.value = currentVal;
+}
+
 async function openYtModal() {
   if (!isDeviceConnected) {
     const wantLogin = await showConfirmDialog(
@@ -359,55 +374,130 @@ async function openYtModal() {
     }
     return;
   }
-  ytInputUrl.value = '';
-  ytCaseName.value = '';
-  ytStatusBox.classList.add('hidden');
-  btnYtSubmit.disabled = false;
-  btnYtSubmit.innerHTML = '<span>⬇️ ダウンロードして転送</span>';
+  populateTargetCaseSelect();
   ytModal.classList.remove('hidden');
   loadYoutubeAuthStatus();
-  setTimeout(() => ytInputUrl.focus(), 60);
+  setTimeout(() => {
+    if (ytSearchInput) ytSearchInput.focus();
+  }, 60);
 }
 
 function closeYtModal() {
   ytModal.classList.add('hidden');
 }
 
-async function handleYtSubmit(e) {
-  e.preventDefault();
-  const query = ytInputUrl.value.trim();
+async function handleYtSearch(e) {
+  if (e) e.preventDefault();
+  const query = (ytSearchInput.value || '').trim();
   if (!query) return;
 
-  const caseName = ytCaseName.value.trim() || null;
-
-  btnYtSubmit.disabled = true;
-  btnYtModalCancel.disabled = true;
-  btnYtModalClose.disabled = true;
-  ytStatusBox.classList.remove('hidden');
-  ytStatusText.textContent = 'YouTubeから音声をダウンロード & 変換中... (曲長により時間がかかります)';
+  btnYtSearch.disabled = true;
+  btnYtSearch.innerHTML = '<span class="spin">⏳</span> 検索中...';
+  ytResultsContainer.innerHTML = `
+    <div class="yt-empty-state">
+      <span class="spin" style="font-size: 26px;">⏳</span>
+      <span>「${escapeHtml(query)}」を YouTube Music から検索中...</span>
+    </div>
+  `;
+  if (ytSearchResultsCount) ytSearchResultsCount.textContent = '';
 
   try {
-    const res = await callCommand('import_youtube_track', {
-      queryOrUrl: query,
-      caseName: caseName,
+    const res = await callCommand('search_youtube', { query, limit: 15 });
+    btnYtSearch.disabled = false;
+    btnYtSearch.innerHTML = '<span>🔍 検索</span>';
+
+    if (!res || !res.results || res.results.length === 0) {
+      ytResultsContainer.innerHTML = `
+        <div class="yt-empty-state">
+          <span style="font-size: 28px;">🔍</span>
+          <span>「${escapeHtml(query)}」に一致する楽曲が見つかりませんでした。<br>別のキーワードやアーティスト名をお試しください。</span>
+        </div>
+      `;
+      if (ytSearchResultsCount) ytSearchResultsCount.textContent = '0 件';
+      return;
+    }
+
+    if (ytSearchResultsCount) ytSearchResultsCount.textContent = `${res.results.length} 件の楽曲が見つかりました`;
+    renderYtSearchResults(res.results);
+  } catch (err) {
+    console.error('YouTube search failed:', err);
+    btnYtSearch.disabled = false;
+    btnYtSearch.innerHTML = '<span>🔍 検索</span>';
+    ytResultsContainer.innerHTML = `
+      <div class="yt-empty-state">
+        <span style="font-size: 28px; color: #ff5252;">⚠️</span>
+        <span style="color: #ff5252;">検索エラー: ${escapeHtml(err.message || String(err))}</span>
+      </div>
+    `;
+  }
+}
+
+function renderYtSearchResults(items) {
+  ytResultsContainer.innerHTML = '';
+  items.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'yt-result-item';
+    row.dataset.id = item.id;
+
+    const thumbHtml = item.thumbnail_url 
+      ? `<img src="${escapeHtml(item.thumbnail_url)}" class="yt-item-thumb" alt="" loading="lazy">`
+      : `<div class="yt-item-thumb" style="display:flex;align-items:center;justify-content:center;background:#1a202c;color:#718096;font-size:18px;">🎵</div>`;
+
+    row.innerHTML = `
+      <div class="yt-item-thumb-wrap">
+        ${thumbHtml}
+        <span class="yt-item-duration">${escapeHtml(item.duration_formatted || '')}</span>
+      </div>
+      <div class="yt-item-info">
+        <div class="yt-item-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</div>
+        <div class="yt-item-artist" title="${escapeHtml(item.artist)}">${escapeHtml(item.artist)}</div>
+      </div>
+      <div class="yt-item-action">
+        <button type="button" class="btn btn-sm btn-yt-add" data-id="${escapeHtml(item.id)}" data-url="${escapeHtml(item.url)}" data-title="${escapeHtml(item.title)}">
+          <span class="btn-add-icon">⬅️</span>
+          <span class="btn-add-label">追加 (+ Add)</span>
+        </button>
+      </div>
+    `;
+
+    const btnAdd = row.querySelector('.btn-yt-add');
+    btnAdd.addEventListener('click', () => handleAddTrackToPacemaker(btnAdd, item));
+
+    ytResultsContainer.appendChild(row);
+  });
+}
+
+async function handleAddTrackToPacemaker(btn, item) {
+  if (!isDeviceConnected) {
+    showConfirmDialog('実機未接続', 'Pacemaker 実機が接続されていません。USBケーブルで実機を接続してください。', '🔌', '了解');
+    return;
+  }
+
+  const caseName = ytTargetCaseSelect ? ytTargetCaseSelect.value.trim() : null;
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.className = 'btn btn-sm btn-yt-add loading';
+  btn.innerHTML = '<span class="spin">⏳</span> 転送中...';
+
+  try {
+    await callCommand('import_youtube_track', {
+      queryOrUrl: item.url || `https://www.youtube.com/watch?v=${item.id}`,
+      caseName: caseName || null,
     });
 
-    ytStatusText.textContent = `✓ 完了！ ${res.message || 'Pacemakerに転送しました'}`;
-    setTimeout(async () => {
-      closeYtModal();
-      await loadDeviceStatus();
-      await loadCases();
-      await loadTracks();
-      btnYtSubmit.disabled = false;
-      btnYtModalCancel.disabled = false;
-      btnYtModalClose.disabled = false;
-    }, 1400);
+    btn.className = 'btn btn-sm btn-yt-add added';
+    btn.innerHTML = '<span>✓ 追加完了</span>';
+
+    // Refresh background state
+    await loadDeviceStatus();
+    await loadCases();
+    await loadTracks();
   } catch (err) {
-    console.error('YouTube import failed:', err);
-    ytStatusText.textContent = `❌ エラー: ${err.message || String(err)}`;
-    btnYtSubmit.disabled = false;
-    btnYtModalCancel.disabled = false;
-    btnYtModalClose.disabled = false;
+    console.error('Import failed:', err);
+    btn.disabled = false;
+    btn.className = 'btn btn-sm btn-yt-add';
+    btn.innerHTML = originalHtml;
+    alert(`転送に失敗しました: ${err.message || String(err)}`);
   }
 }
 
@@ -1543,11 +1633,11 @@ function setupEvents() {
   // YouTube / YouTube Music Import Modal Events
   if (btnOpenYtModal) btnOpenYtModal.addEventListener('click', openYtModal);
   if (btnYtModalClose) btnYtModalClose.addEventListener('click', closeYtModal);
-  if (btnYtModalCancel) btnYtModalCancel.addEventListener('click', closeYtModal);
-  if (ytImportForm) ytImportForm.addEventListener('submit', handleYtSubmit);
+  if (btnYtModalCloseBottom) btnYtModalCloseBottom.addEventListener('click', closeYtModal);
+  if (ytSearchForm) ytSearchForm.addEventListener('submit', handleYtSearch);
   if (ytModal) {
     ytModal.addEventListener('click', (e) => {
-      if (e.target === ytModal && !btnYtSubmit.disabled) closeYtModal();
+      if (e.target === ytModal) closeYtModal();
     });
   }
   initYoutubeAuthHandlers();

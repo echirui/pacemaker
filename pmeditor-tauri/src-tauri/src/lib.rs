@@ -396,6 +396,26 @@ pub struct YoutubeImportResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct YoutubeSearchResultItem {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    pub artist: String,
+    pub duration_secs: u32,
+    pub duration_formatted: String,
+    pub thumbnail_url: Option<String>,
+    pub view_count: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct YoutubeSearchResponse {
+    pub success: bool,
+    pub query: String,
+    pub results: Vec<YoutubeSearchResultItem>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct YoutubeAuthStatus {
     pub is_logged_in: bool,
     pub cookie_file_exists: bool,
@@ -647,6 +667,115 @@ fn find_executable(name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[command]
+async fn search_youtube(
+    query: String,
+    limit: Option<usize>,
+) -> Result<YoutubeSearchResponse, String> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return Ok(YoutubeSearchResponse {
+            success: true,
+            query: String::new(),
+            results: Vec::new(),
+            error: None,
+        });
+    }
+
+    let ytdlp_path = find_executable("yt-dlp")
+        .ok_or_else(|| "yt-dlp が見つかりません。'brew install yt-dlp' でインストールしてください。".to_string())?;
+
+    let is_url = trimmed.starts_with("http://") || trimmed.starts_with("https://");
+    let search_limit = limit.unwrap_or(12).clamp(1, 30);
+    let target = if is_url {
+        trimmed.to_string()
+    } else {
+        format!("ytsearch{}:{}", search_limit, trimmed)
+    };
+
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    let enhanced_path = format!("/opt/homebrew/bin:/usr/local/bin:{}", current_path);
+
+    let mut cmd = std::process::Command::new(&ytdlp_path);
+    cmd.env("PATH", &enhanced_path);
+    cmd.args(&[
+        "--dump-single-json",
+        "--flat-playlist",
+        "--no-warnings",
+    ]);
+
+    let cookie_file = get_youtube_cookie_path();
+    if cookie_file.exists() {
+        cmd.args(&["--cookies", &cookie_file.display().to_string()]);
+    }
+
+    cmd.arg(&target);
+
+    let output = cmd.output().map_err(|e| format!("検索プロセスの起動に失敗しました: {}", e))?;
+    if !output.status.success() {
+        let err_text = String::from_utf8_lossy(&output.stderr);
+        let last_line = err_text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("検索に失敗しました");
+        return Err(last_line.to_string());
+    }
+
+    let json_val: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("検索結果の解析に失敗しました: {}", e))?;
+
+    let parse_entry = |item: &serde_json::Value| -> Option<YoutubeSearchResultItem> {
+        let id = item["id"].as_str()?.to_string();
+        let url = item["url"].as_str().map(|u| {
+            if u.starts_with("http") { u.to_string() } else { format!("https://www.youtube.com/watch?v={}", id) }
+        }).unwrap_or_else(|| format!("https://www.youtube.com/watch?v={}", id));
+
+        let title = item["title"].as_str().unwrap_or("Unknown Title").to_string();
+        let artist = item["artist"]
+            .as_str()
+            .or_else(|| item["creator"].as_str())
+            .or_else(|| item["uploader"].as_str())
+            .or_else(|| item["channel"].as_str())
+            .unwrap_or("YouTube Music")
+            .to_string();
+
+        let duration_secs = item["duration"].as_f64().unwrap_or(0.0).round() as u32;
+        let duration_formatted = format!("{}:{:02}", duration_secs / 60, duration_secs % 60);
+
+        let thumbnail_url = item["thumbnails"].as_array().and_then(|arr| {
+            arr.iter().rev().find_map(|t| t["url"].as_str().map(|s| s.to_string()))
+        });
+
+        let view_count = item["view_count"].as_u64();
+
+        Some(YoutubeSearchResultItem {
+            id,
+            url,
+            title,
+            artist,
+            duration_secs,
+            duration_formatted,
+            thumbnail_url,
+            view_count,
+        })
+    };
+
+    let mut results = Vec::new();
+    if let Some(entries) = json_val["entries"].as_array() {
+        for entry in entries {
+            if let Some(res) = parse_entry(entry) {
+                results.push(res);
+            }
+        }
+    } else if let Some(res) = parse_entry(&json_val) {
+        results.push(res);
+    }
+
+    Ok(YoutubeSearchResponse {
+        success: true,
+        query: trimmed.to_string(),
+        results,
+        error: None,
+    })
 }
 
 #[command]
@@ -995,6 +1124,7 @@ pub fn run() {
             get_track_audio_bytes,
             inspect_firmware,
             import_youtube_track,
+            search_youtube,
             get_youtube_auth_status,
             save_youtube_cookies,
             clear_youtube_cookies,
@@ -1048,6 +1178,13 @@ mod tests {
         let cleared = clear_youtube_cookies().expect("Failed to clear cookies");
         assert!(!cleared.is_logged_in);
         assert!(!cleared.cookie_file_exists);
+    }
+
+    #[test]
+    fn test_search_youtube_empty() {
+        let res = tauri::async_runtime::block_on(search_youtube("".to_string(), None)).expect("Search should succeed");
+        assert!(res.success);
+        assert!(res.results.is_empty());
     }
 }
 

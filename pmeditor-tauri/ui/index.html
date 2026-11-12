@@ -252,15 +252,15 @@
 
     <!-- YouTube / YouTube Music Import Modal -->
     <div id="ytModal" class="modal-overlay hidden">
-      <div class="modal-dialog">
+      <div class="modal-dialog modal-dialog-yt">
         <div class="modal-header">
           <div class="modal-title-group">
             <span class="modal-icon" style="color: #ff0055;">▶</span>
-            <h3 class="modal-title">YouTube / YouTube Music からインポート</h3>
+            <h3 class="modal-title">YouTube / YouTube Music から検索・追加</h3>
           </div>
           <button type="button" id="btnYtModalClose" class="btn-icon btn-modal-close" title="閉じる">×</button>
         </div>
-        <form id="ytImportForm" class="modal-body">
+        <div class="modal-body">
           <!-- YouTube Music Authentication Quick Status -->
           <div class="yt-auth-banner" id="ytImportAuthBanner">
             <div class="yt-auth-status-info">
@@ -272,37 +272,35 @@
             </button>
           </div>
 
-          <div class="form-group" style="margin-bottom: 14px;">
-            <label for="ytInputUrl" style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px;">YouTube Music / YouTube の URL または 検索ワード *</label>
-            <input type="text" id="ytInputUrl" required placeholder="例: https://music.youtube.com/watch?v=... または 曲名・アーティスト名" style="width: 100%; padding: 10px 12px; background: #121418; border: 1px solid #2b323d; border-radius: 6px; color: #fff; font-size: 14px;">
-            <p style="font-size: 11px; color: #78909c; margin-top: 6px; line-height: 1.5;">
-              💡 楽曲URL、プレイリストURL、または検索ワード（例: 「Daft Punk One More Time」）に対応しています。<br>
-              最高音質MP3（320kbps / 44.1kHz）に自動変換され、Pacemaker実機ストレージとデータベースに直接転送・登録されます。
-            </p>
-          </div>
-
-          <div class="form-group" style="margin-bottom: 16px;">
-            <label for="ytCaseName" style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px;">プレイリスト (Case) にも追加（任意）</label>
-            <input type="text" id="ytCaseName" placeholder="例: Favorites, Club Mix （空欄の場合はライブラリのみに追加）" style="width: 100%; padding: 8px 12px; background: #121418; border: 1px solid #2b323d; border-radius: 6px; color: #fff; font-size: 13px;">
-          </div>
-
-          <div id="ytStatusBox" class="hidden" style="background: rgba(0, 229, 255, 0.08); border: 1px solid rgba(0, 229, 255, 0.25); border-radius: 6px; padding: 12px 14px; margin-bottom: 16px; font-size: 13px; line-height: 1.5;">
-            <div id="ytStatusSpinner" style="display: flex; align-items: center; gap: 8px;">
-              <span class="spin">⏳</span>
-              <span id="ytStatusText">ダウンロード処理中...</span>
-            </div>
-            <div id="ytProgressBar" style="margin-top: 8px; height: 4px; background: #1a202c; border-radius: 2px; overflow: hidden;">
-              <div id="ytProgressFill" style="width: 100%; height: 100%; background: #00e5ff;"></div>
-            </div>
-          </div>
-
-          <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
-            <button type="button" id="btnYtModalCancel" class="btn btn-secondary">キャンセル</button>
-            <button type="submit" id="btnYtSubmit" class="btn btn-primary" style="background: linear-gradient(135deg, #ff0055, #ff0000);">
-              <span>⬇️ ダウンロードして転送</span>
+          <!-- Search Form -->
+          <form id="ytSearchForm" class="yt-search-bar">
+            <input type="text" id="ytSearchInput" placeholder="曲名、アーティスト名、または YouTube Music の URL を入力..." autofocus required>
+            <button type="submit" id="btnYtSearch" class="btn btn-primary" style="background: linear-gradient(135deg, #ff0055, #ff0000); min-width: 90px;">
+              <span>🔍 検索</span>
             </button>
+          </form>
+
+          <!-- Playlist (Case) Selector -->
+          <div class="yt-case-selector-row">
+            <label for="ytTargetCaseSelect">📁 追加先 Case (プレイリスト):</label>
+            <select id="ytTargetCaseSelect">
+              <option value="">ライブラリ全体のみ (Case指定なし)</option>
+            </select>
           </div>
-        </form>
+
+          <!-- Search Results List -->
+          <div id="ytResultsContainer" class="yt-results-container">
+            <div class="yt-empty-state" id="ytSearchPlaceholder">
+              <span style="font-size: 28px;">🎵</span>
+              <span>曲名・アーティスト名（例: 「Daft Punk」や「Official髭男dism」）、<br>または YouTube Music の URL を入力して検索してください。<br>検索結果からワンクリックで Pacemaker 実機へ転送・登録できます。</span>
+            </div>
+          </div>
+
+          <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px;">
+            <span id="ytSearchResultsCount" style="font-size: 12px; color: #718096;"></span>
+            <button type="button" id="btnYtModalCloseBottom" class="btn btn-secondary">閉じる</button>
+          </div>
+        </div>
       </div>
     </div>
 
