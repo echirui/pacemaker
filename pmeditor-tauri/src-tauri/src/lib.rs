@@ -377,6 +377,243 @@ fn inspect_firmware(path: String) -> Result<PfwInfo, String> {
     PfwInfo::parse(&path)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct YoutubeImportItem {
+    pub track_id: i64,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub duration_secs: u32,
+    pub file_path: String,
+    pub virtual_location: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct YoutubeImportResponse {
+    pub success: bool,
+    pub message: String,
+    pub items: Vec<YoutubeImportItem>,
+}
+
+fn find_executable(name: &str) -> Option<PathBuf> {
+    let candidates = [
+        format!("/opt/homebrew/bin/{}", name),
+        format!("/usr/local/bin/{}", name),
+        format!("/usr/bin/{}", name),
+    ];
+    for c in &candidates {
+        let p = PathBuf::from(c);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    if let Ok(output) = std::process::Command::new("which").arg(name).output() {
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !s.is_empty() {
+                return Some(PathBuf::from(s));
+            }
+        }
+    }
+    None
+}
+
+#[command]
+async fn import_youtube_track(
+    query_or_url: String,
+    case_name: Option<String>,
+) -> Result<YoutubeImportResponse, String> {
+    let vol = resolve_pacemaker_volume()
+        .ok_or_else(|| "Pacemaker 実機が接続されていません。USBケーブルで実機を接続してください。".to_string())?;
+
+    let trimmed = query_or_url.trim();
+    if trimmed.is_empty() {
+        return Err("URLまたは検索ワードを入力してください。".to_string());
+    }
+
+    let ytdlp_path = find_executable("yt-dlp")
+        .ok_or_else(|| "yt-dlp が見つかりません。Terminalで 'brew install yt-dlp ffmpeg' を実行してインストールしてください。".to_string())?;
+
+    let now_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let temp_dir = std::env::temp_dir().join(format!("pacemaker_yt_{}", now_ts));
+    fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("一時ディレクトリの作成に失敗しました: {}", e))?;
+
+    let is_url = trimmed.starts_with("http://") || trimmed.starts_with("https://");
+    let target = if is_url {
+        trimmed.to_string()
+    } else {
+        format!("ytsearch1:{}", trimmed)
+    };
+
+    let is_playlist = is_url && (trimmed.contains("list=") || trimmed.contains("/playlist"));
+
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    let enhanced_path = format!("/opt/homebrew/bin:/usr/local/bin:{}", current_path);
+
+    let mut cmd = std::process::Command::new(&ytdlp_path);
+    cmd.env("PATH", &enhanced_path);
+    cmd.args(&[
+        "--extract-audio",
+        "--audio-format", "mp3",
+        "--audio-quality", "0",
+        "--print-json",
+        "-o", &format!("{}/%(id)s.%(ext)s", temp_dir.display()),
+    ]);
+
+    if !is_playlist {
+        cmd.arg("--no-playlist");
+    }
+
+    cmd.arg(&target);
+
+    let output = cmd.output().map_err(|e| format!("ダウンロードプロセスの実行に失敗しました: {}", e))?;
+
+    if !output.status.success() {
+        let err_text = String::from_utf8_lossy(&output.stderr);
+        let _ = fs::remove_dir_all(&temp_dir);
+        let last_line = err_text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("不明なエラー");
+        return Err(format!("ダウンロードに失敗しました: {}", last_line));
+    }
+
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let mut imported_items = Vec::new();
+
+    // If case_name is specified, optionally create or add to Case
+    let mut target_case_id: Option<i64> = None;
+    if let Some(ref cname) = case_name {
+        let trimmed_case = cname.trim();
+        if !trimmed_case.is_empty() {
+            let cid = with_db(|db| db.create_case(trimmed_case).map_err(|e| e.to_string()))?;
+            target_case_id = Some(cid);
+        }
+    }
+
+    for line in stdout_str.lines() {
+        let line_trimmed = line.trim();
+        if line_trimmed.is_empty() || !line_trimmed.starts_with('{') {
+            continue;
+        }
+
+        let json: serde_json::Value = match serde_json::from_str(line_trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let video_id = json["id"].as_str().unwrap_or("track").to_string();
+        let raw_title = json["title"].as_str().unwrap_or("Unknown Title").to_string();
+        let raw_artist = json["artist"]
+            .as_str()
+            .or_else(|| json["creator"].as_str())
+            .or_else(|| json["uploader"].as_str())
+            .or_else(|| json["channel"].as_str())
+            .unwrap_or("YouTube Music")
+            .to_string();
+
+        let album_name = json["album"].as_str().unwrap_or("YouTube Imports").to_string();
+        let duration = json["duration"].as_f64().unwrap_or(0.0).round() as u32;
+
+        let temp_audio_file = temp_dir.join(format!("{}.mp3", video_id));
+        let actual_audio_file = if temp_audio_file.exists() {
+            Some(temp_audio_file)
+        } else {
+            // Find any mp3 in temp_dir
+            fs::read_dir(&temp_dir).ok().and_then(|entries| {
+                entries.flatten().find_map(|e| {
+                    let p = e.path();
+                    if p.extension().and_then(|ext| ext.to_str()) == Some("mp3") {
+                        Some(p)
+                    } else {
+                        None
+                    }
+                })
+            })
+        };
+
+        let audio_file = match actual_audio_file {
+            Some(f) => f,
+            None => continue,
+        };
+
+        let file_size = fs::metadata(&audio_file).map(|m| m.len()).unwrap_or(0);
+        if file_size == 0 {
+            continue;
+        }
+
+        // Generate official Pacemaker filesystem path: .Pacemaker/Music/X/Y/HASH.mp3
+        let paths = pacemaker_core::hasher::generate_track_paths(&raw_title, file_size, "mp3");
+        let dest_path = vol.join(&paths.relative_music_path);
+
+        if let Some(parent) = dest_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+
+        fs::copy(&audio_file, &dest_path)
+            .map_err(|e| format!("Pacemaker ストレージへのファイル転送に失敗しました: {}", e))?;
+
+        // Generate corresponding waveform .str file
+        let str_path = dest_path.with_extension("str");
+        let str_content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<TrackAnalysedData>\n\t<normalizeFactor>1</normalizeFactor>\n\t<beatStartOffset>0</beatStartOffset>\n\t<realBeatLocations></realBeatLocations>\n</TrackAnalysedData>\n";
+        let _ = fs::write(&str_path, str_content);
+
+        // Register in SQLite music.db
+        let track_input = pacemaker_core::db::NewTrackInput {
+            title: raw_title.clone(),
+            artist: raw_artist.clone(),
+            album: Some(album_name.clone()),
+            genre: Some("YouTube Music".into()),
+            year: Some(2026),
+            play_time_secs: duration,
+            file_size,
+            bit_rate: 320,
+            sample_rate: 44100,
+            format: "MPEG-1 Layer 3".into(),
+            location: paths.virtual_location.clone(),
+            bpm: None,
+            key: None,
+            comments: Some(format!("Imported from YouTube: {}", video_id)),
+        };
+
+        let track_id = with_db(|db| {
+            let id = db.insert_track(&track_input)
+                .map_err(|e| format!("Database insert error: {}", e))?;
+            if let Some(cid) = target_case_id {
+                let _ = db.add_track_to_case(cid, id);
+            }
+            Ok(id)
+        })?;
+
+        imported_items.push(YoutubeImportItem {
+            track_id,
+            title: raw_title,
+            artist: raw_artist,
+            album: album_name,
+            duration_secs: duration,
+            file_path: dest_path.display().to_string(),
+            virtual_location: paths.virtual_location,
+        });
+    }
+
+    // Touch Pacemaker syncfile to notify hardware of update
+    touch_syncfile(&vol);
+
+    // Clean up temporary download folder
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    if imported_items.is_empty() {
+        return Err("音声を変換・保存できませんでした。URLまたは検索ワードをご確認ください。".to_string());
+    }
+
+    Ok(YoutubeImportResponse {
+        success: true,
+        message: format!("{} 曲を Pacemaker に正常にダウンロード・登録しました！", imported_items.len()),
+        items: imported_items,
+    })
+}
+
 fn serve_audio_request(req: tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8>> {
     let path = req.uri().path();
     // Path format: /tracks/{track_id}
@@ -498,7 +735,8 @@ pub fn run() {
             update_track_metadata,
             get_waveform_data,
             get_track_audio_bytes,
-            inspect_firmware
+            inspect_firmware,
+            import_youtube_track
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

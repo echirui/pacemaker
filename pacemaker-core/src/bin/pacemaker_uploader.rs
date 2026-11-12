@@ -42,6 +42,19 @@ enum Commands {
     },
     /// Scan and display connected Tonium Pacemaker device info
     Device,
+    /// Download and import music from YouTube or YouTube Music to Pacemaker device
+    ImportYt {
+        /// YouTube / YouTube Music URL or search query (e.g. "Artist - Title")
+        query: String,
+
+        /// Optional Playlist (Case) name to add the track to
+        #[arg(short, long)]
+        case: Option<String>,
+
+        /// Custom Pacemaker volume path (optional, auto-detected if omitted)
+        #[arg(short, long)]
+        dest: Option<PathBuf>,
+    },
 }
 
 fn main() {
@@ -56,6 +69,9 @@ fn main() {
         }
         Commands::Device => {
             cmd_device();
+        }
+        Commands::ImportYt { query, case, dest } => {
+            cmd_import_yt(&query, case.as_deref(), dest.as_deref());
         }
     }
 }
@@ -222,5 +238,153 @@ fn cmd_upload(fw_path: &Path, custom_dest: Option<PathBuf>, force: bool) {
     println!("  2. Unplug the USB cable.");
     println!("  3. The Pacemaker will automatically boot into update mode,");
     println!("     flash the new firmware banks, and restart.");
+    println!("========================================================\n");
+}
+
+fn cmd_import_yt(query: &str, case: Option<&str>, custom_dest: Option<&Path>) {
+    println!("\n🎵 === Tonium Pacemaker YouTube Music Importer ===");
+    println!("Query / Target: {}", query);
+
+    let vol = match custom_dest.map(PathBuf::from).or_else(detect_pacemaker_device) {
+        Some(v) => v,
+        None => {
+            eprintln!("❌ Pacemaker device not detected. Connect device via USB or specify --dest <path>");
+            std::process::exit(1);
+        }
+    };
+    println!("✓ Target Device Volume: {}", vol.display());
+
+    let ytdlp_candidates = [
+        "/opt/homebrew/bin/yt-dlp",
+        "/usr/local/bin/yt-dlp",
+        "yt-dlp",
+    ];
+    let ytdlp_bin = ytdlp_candidates.iter().find(|p| Path::new(p).exists())
+        .copied().unwrap_or("yt-dlp");
+
+    let now_ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+    let temp_dir = std::env::temp_dir().join(format!("pm_uploader_yt_{}", now_ts));
+    let _ = fs::create_dir_all(&temp_dir);
+
+    println!("⬇️  Downloading and extracting audio via yt-dlp...");
+    let is_url = query.starts_with("http://") || query.starts_with("https://");
+    let target = if is_url { query.to_string() } else { format!("ytsearch1:{}", query) };
+    let is_playlist = is_url && (query.contains("list=") || query.contains("/playlist"));
+
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    let enhanced_path = format!("/opt/homebrew/bin:/usr/local/bin:{}", current_path);
+
+    let mut cmd = std::process::Command::new(ytdlp_bin);
+    cmd.env("PATH", &enhanced_path);
+    cmd.args(&[
+        "--extract-audio",
+        "--audio-format", "mp3",
+        "--audio-quality", "0",
+        "--print-json",
+        "-o", &format!("{}/%(id)s.%(ext)s", temp_dir.display()),
+    ]);
+    if !is_playlist {
+        cmd.arg("--no-playlist");
+    }
+    cmd.arg(&target);
+
+    let output = match cmd.output() {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("❌ Failed to execute yt-dlp: {}", e);
+            eprintln!("Please ensure yt-dlp and ffmpeg are installed: 'brew install yt-dlp ffmpeg'");
+            let _ = fs::remove_dir_all(&temp_dir);
+            std::process::exit(1);
+        }
+    };
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        eprintln!("❌ Download failed: {}", err.lines().last().unwrap_or(&err));
+        let _ = fs::remove_dir_all(&temp_dir);
+        std::process::exit(1);
+    }
+
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let db_path = vol.join(".Pacemaker/music.db");
+    let db = match pacemaker_core::db::PacemakerDb::open(&db_path.to_string_lossy()) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("❌ Failed to open Pacemaker database at {}: {}", db_path.display(), e);
+            let _ = fs::remove_dir_all(&temp_dir);
+            std::process::exit(1);
+        }
+    };
+
+    let case_id = case.and_then(|cname| {
+        db.create_case(cname).ok()
+    });
+
+    let mut count = 0;
+    for line in stdout_str.lines() {
+        let line_trimmed = line.trim();
+        if !line_trimmed.starts_with('{') { continue; }
+        let json: serde_json::Value = match serde_json::from_str(line_trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let video_id = json["id"].as_str().unwrap_or("track");
+        let title = json["title"].as_str().unwrap_or("Unknown Title");
+        let artist = json["artist"].as_str()
+            .or_else(|| json["creator"].as_str())
+            .or_else(|| json["uploader"].as_str())
+            .unwrap_or("YouTube Music");
+        let album = json["album"].as_str().unwrap_or("YouTube Imports");
+        let duration = json["duration"].as_f64().unwrap_or(0.0).round() as u32;
+
+        let audio_file = temp_dir.join(format!("{}.mp3", video_id));
+        if !audio_file.exists() { continue; }
+        let file_size = fs::metadata(&audio_file).map(|m| m.len()).unwrap_or(0);
+        if file_size == 0 { continue; }
+
+        let paths = pacemaker_core::hasher::generate_track_paths(title, file_size, "mp3");
+        let dest_file = vol.join(&paths.relative_music_path);
+        if let Some(p) = dest_file.parent() { let _ = fs::create_dir_all(p); }
+        if let Err(e) = fs::copy(&audio_file, &dest_file) {
+            eprintln!("❌ Error copying {} to {}: {}", audio_file.display(), dest_file.display(), e);
+            continue;
+        }
+
+        let str_file = dest_file.with_extension("str");
+        let str_content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<TrackAnalysedData>\n\t<normalizeFactor>1</normalizeFactor>\n\t<beatStartOffset>0</beatStartOffset>\n\t<realBeatLocations></realBeatLocations>\n</TrackAnalysedData>\n";
+        let _ = fs::write(&str_file, str_content);
+
+        let input = pacemaker_core::db::NewTrackInput {
+            title: title.to_string(),
+            artist: artist.to_string(),
+            album: Some(album.to_string()),
+            genre: Some("YouTube Music".to_string()),
+            year: Some(2026),
+            play_time_secs: duration,
+            file_size,
+            bit_rate: 320,
+            sample_rate: 44100,
+            format: "MPEG-1 Layer 3".to_string(),
+            location: paths.virtual_location,
+            bpm: None,
+            key: None,
+            comments: Some(format!("Imported from YouTube: {}", video_id)),
+        };
+
+        if let Ok(tid) = db.insert_track(&input) {
+            if let Some(cid) = case_id {
+                let _ = db.add_track_to_case(cid, tid);
+            }
+            println!("  ✓ Registered: {} - {} (ID: {})", artist, title, tid);
+            count += 1;
+        }
+    }
+
+    let syncfile = vol.join(".Pacemaker/syncfile");
+    let _ = fs::write(syncfile, b"1");
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    println!("\n🎉 Successfully imported {} track(s) to Tonium Pacemaker!", count);
     println!("========================================================\n");
 }

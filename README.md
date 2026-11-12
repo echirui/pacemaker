@@ -76,5 +76,30 @@
 ## 💻 デスクトップエディター (Pacemaker Editor) の特徴
 
 - **実機自動検出**: USB接続された実機（`/Volumes/Pacemaker` 等）の `.Pacemaker/music.db` を自動検出・リアルタイム反映（未接続時は安全に非表示ガード）。
+- **YouTube / YouTube Music インポート**:
+  - エディターヘッダーの「**YouTube Music から追加**」ボタン、または CLI から URL（単曲・プレイリスト）や楽曲検索キーワードを指定してダウンロード。
+  - 最高音質 MP3（320kbps / 44.1kHz）への自動変換、公式ディレクトリハッシュ（`.Pacemaker/Music/X/Y/HASH.mp3`）および波形メタデータ（`.str`）を自動生成。
+  - 実機の `music.db` および指定のプレイリスト（Case）へ直接登録・自動同期。
 - **高精細 3バンド波形**: Web Audio API による 700 バー波形解析（低域: 赤/コーラル、中域: 緑/ゴールド、高域: シアン）とリアルタイム再生連動。
 - **プレイリスト & CUE/LOOP 編集**: 実機のデータベースおよび `.str` ファイルへの直接書き込みと同期。
+
+---
+
+## 🎵 YouTube / YouTube Music ダウンロード & 転送の使い方
+
+### 1. デスクトップエディターから転送
+1. Pacemaker 実機を USB ケーブルで接続します。
+2. エディター右上の「**▶ YouTube Music から追加**」をクリックします。
+3. YouTube Music または YouTube の URL（楽曲またはプレイリスト）、または検索キーワード（例: `Daft Punk One More Time`）を入力します。
+4. （任意）追加先のプレイリスト名（Case名）を入力します。
+5. 「**⬇️ ダウンロードして転送**」をクリックすると、自動でダウンロード・最高音質MP3変換・Pacemakerストレージ配置・データベース登録が行われます。
+
+### 2. CLI ツールから転送 (`pacemaker-uploader`)
+```bash
+# URL から転送
+cargo run --bin pacemaker_uploader -- import-yt "https://music.youtube.com/watch?v=XXXXXX"
+
+# 検索キーワードから直接ダウンロード & 転送
+cargo run --bin pacemaker_uploader -- import-yt "Arctic Monkeys R U Mine" --case "Rock"
+```
+*(※ ダウンロードには Homebrew でインストールした `yt-dlp` および `ffmpeg` を使用します)*

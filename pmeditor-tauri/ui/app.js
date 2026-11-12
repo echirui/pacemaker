@@ -69,6 +69,74 @@ const editLocation = document.getElementById('editLocation');
 const editComments = document.getElementById('editComments');
 const btnModalSave = document.getElementById('btnModalSave');
 
+// YouTube / YouTube Music Modal Elements
+const btnOpenYtModal = document.getElementById('btnOpenYtModal');
+const ytModal = document.getElementById('ytModal');
+const btnYtModalClose = document.getElementById('btnYtModalClose');
+const btnYtModalCancel = document.getElementById('btnYtModalCancel');
+const ytImportForm = document.getElementById('ytImportForm');
+const ytInputUrl = document.getElementById('ytInputUrl');
+const ytCaseName = document.getElementById('ytCaseName');
+const ytStatusBox = document.getElementById('ytStatusBox');
+const ytStatusText = document.getElementById('ytStatusText');
+const btnYtSubmit = document.getElementById('btnYtSubmit');
+
+function openYtModal() {
+  if (!isDeviceConnected) {
+    showConfirmDialog('実機未接続', 'Pacemaker 実機が接続されていません。USBケーブルで実機を接続してから楽曲を追加してください。', '🔌', '了解');
+    return;
+  }
+  ytInputUrl.value = '';
+  ytCaseName.value = '';
+  ytStatusBox.classList.add('hidden');
+  btnYtSubmit.disabled = false;
+  btnYtSubmit.innerHTML = '<span>⬇️ ダウンロードして転送</span>';
+  ytModal.classList.remove('hidden');
+  setTimeout(() => ytInputUrl.focus(), 60);
+}
+
+function closeYtModal() {
+  ytModal.classList.add('hidden');
+}
+
+async function handleYtSubmit(e) {
+  e.preventDefault();
+  const query = ytInputUrl.value.trim();
+  if (!query) return;
+
+  const caseName = ytCaseName.value.trim() || null;
+
+  btnYtSubmit.disabled = true;
+  btnYtModalCancel.disabled = true;
+  btnYtModalClose.disabled = true;
+  ytStatusBox.classList.remove('hidden');
+  ytStatusText.textContent = 'YouTubeから音声をダウンロード & 変換中... (曲長により時間がかかります)';
+
+  try {
+    const res = await callCommand('import_youtube_track', {
+      queryOrUrl: query,
+      caseName: caseName,
+    });
+
+    ytStatusText.textContent = `✓ 完了！ ${res.message || 'Pacemakerに転送しました'}`;
+    setTimeout(async () => {
+      closeYtModal();
+      await loadDeviceStatus();
+      await loadCases();
+      await loadTracks();
+      btnYtSubmit.disabled = false;
+      btnYtModalCancel.disabled = false;
+      btnYtModalClose.disabled = false;
+    }, 1400);
+  } catch (err) {
+    console.error('YouTube import failed:', err);
+    ytStatusText.textContent = `❌ エラー: ${err.message || String(err)}`;
+    btnYtSubmit.disabled = false;
+    btnYtModalCancel.disabled = false;
+    btnYtModalClose.disabled = false;
+  }
+}
+
 // Confirmation & Prompt Modal Elements (WKWebView safe)
 const confirmModal = document.getElementById('confirmModal');
 const confirmModalTitle = document.getElementById('confirmModalTitle');
@@ -1197,6 +1265,17 @@ function setupEvents() {
     });
   }
 
+  // YouTube / YouTube Music Import Modal Events
+  if (btnOpenYtModal) btnOpenYtModal.addEventListener('click', openYtModal);
+  if (btnYtModalClose) btnYtModalClose.addEventListener('click', closeYtModal);
+  if (btnYtModalCancel) btnYtModalCancel.addEventListener('click', closeYtModal);
+  if (ytImportForm) ytImportForm.addEventListener('submit', handleYtSubmit);
+  if (ytModal) {
+    ytModal.addEventListener('click', (e) => {
+      if (e.target === ytModal && !btnYtSubmit.disabled) closeYtModal();
+    });
+  }
+
   // Global Keydown Handler for Modals
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
@@ -1206,6 +1285,8 @@ function setupEvents() {
         closePrompt(null);
       } else if (editModal && !editModal.classList.contains('hidden')) {
         closeEditModal();
+      } else if (ytModal && !ytModal.classList.contains('hidden') && !btnYtSubmit.disabled) {
+        closeYtModal();
       }
     }
   });

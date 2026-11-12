@@ -346,6 +346,84 @@ impl PacemakerDb {
         )?;
         Ok(())
     }
+
+    /// Inserts a newly imported track record into Tonium Pacemaker `tracks` table
+    pub fn insert_track(&self, input: &NewTrackInput) -> Result<i64> {
+        let now = chrono_now_ms();
+        let ind_title = input.title.to_lowercase();
+        let ind_artist = input.artist.to_lowercase();
+        let ind_album = input.album.as_deref().unwrap_or("").to_lowercase();
+        let ind_genre = input.genre.as_deref().unwrap_or("").to_lowercase();
+        let ind_bpm = input.bpm.map(|b| b.round() as i64).unwrap_or(0);
+        let bpm_val = input.bpm.unwrap_or(0.0);
+        let album_val = input.album.as_deref().unwrap_or("");
+        let genre_val = input.genre.as_deref().unwrap_or("");
+        let year_val = input.year.unwrap_or(0);
+        let key_val = input.key.as_deref().unwrap_or("");
+        let comments_val = input.comments.as_deref().unwrap_or("");
+
+        self.conn.execute(
+            "INSERT INTO tracks (
+                title, artist, album, genre, year,
+                location, format, bit_rate, sample_rate, file_size,
+                play_time_secs, rating, comments, date_added, last_played,
+                times_played, cue_point, rc_mixes, bpm, label,
+                track_flags, loop_in, loop_out, ind_title, ind_artist,
+                ind_album, ind_genre, ind_bpm, key, date_modified, modified_by_ed,
+                analyzed_by_ed, analysis_ver
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5,
+                ?6, ?7, ?8, ?9, ?10,
+                ?11, 0, ?12, ?13, -1,
+                0, -1, 0, ?14, '',
+                2, -1, -1, ?15, ?16,
+                ?17, ?18, ?19, ?20, ?13, '2.0.2.14170',
+                '2.0.2.14170', 1
+            )",
+            params![
+                input.title,
+                input.artist,
+                album_val,
+                genre_val,
+                year_val,
+                input.location,
+                input.format,
+                input.bit_rate,
+                input.sample_rate,
+                input.file_size as i64,
+                input.play_time_secs,
+                comments_val,
+                now,
+                bpm_val,
+                ind_title,
+                ind_artist,
+                ind_album,
+                ind_genre,
+                ind_bpm,
+                key_val,
+            ],
+        )?;
+
+        Ok(self.conn.last_insert_rowid())
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NewTrackInput {
+    pub title: String,
+    pub artist: String,
+    pub album: Option<String>,
+    pub genre: Option<String>,
+    pub year: Option<u32>,
+    pub play_time_secs: u32,
+    pub file_size: u64,
+    pub bit_rate: u32,
+    pub sample_rate: u32,
+    pub format: String,
+    pub location: String,
+    pub bpm: Option<f64>,
+    pub key: Option<String>,
+    pub comments: Option<String>,
 }
 
 fn chrono_now_ms() -> i64 {
@@ -354,4 +432,66 @@ fn chrono_now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_insert_and_query_track() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("
+            CREATE TABLE tracks (
+                track_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                artist VARCHAR(255), album_artist VARCHAR(255), title VARCHAR(255), composer VARCHAR(255),
+                album VARCHAR(255), track_number NUMBER(4), year NUMBER(4), genre VARCHAR(255),
+                is_part_of_c NUMBER(1), location VARCHAR(255), format VARCHAR(32), bit_rate NUMBER(10),
+                sample_rate NUMBER(10), file_size NUMBER(10), play_time_secs NUMBER(10), rating NUMBER(1),
+                comments VARCHAR(255), date_added NUMBER(20), last_played NUMBER(20), times_played NUMBER(10),
+                cue_point NUMBER(20), rc_mixes NUMBER(10), bpm REAL, label VARCHAR(255),
+                track_flags NUMBER(10) DEFAULT 0, global_id VARCHAR(255), loop_in NUMBER(20), loop_out NUMBER(20),
+                structured_ct VARCHAR(511), ind_title VARCHAR(32), ind_artist VARCHAR(32), ind_album VARCHAR(32),
+                ind_genre VARCHAR(32), ind_bpm INTEGER, discid VARCHAR(255), producer VARCHAR(255),
+                remixer VARCHAR(255), key VARCHAR(4), number_of_tracks NUMBER(4), disc_number NUMBER(4),
+                number_of_discs NUMBER(4), date_modified NUMBER(20), modified_by_ed VARCHAR(32),
+                analyzed_by_ed VARCHAR(32), analysis_ver INTEGER
+            );
+            CREATE TABLE cases (
+                case_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name VARCHAR(255), date_created NUMBER(20), times_played NUMBER(10),
+                rating NUMBER(1), date_modified NUMBER(20)
+            );
+            CREATE TABLE casetracks (
+                case_id INTEGER, track_id INTEGER
+            );
+        ").unwrap();
+
+        let db = PacemakerDb { conn };
+        let new_track = NewTrackInput {
+            title: "Test YouTube Track".into(),
+            artist: "Test Artist".into(),
+            album: Some("Test Album".into()),
+            genre: Some("Electronic".into()),
+            year: Some(2026),
+            play_time_secs: 180,
+            file_size: 4000000,
+            bit_rate: 320,
+            sample_rate: 44100,
+            format: "MPEG-1 Layer 3".into(),
+            location: "/pmdb_tracks/a/b/12345678.mp3".into(),
+            bpm: Some(128.0),
+            key: Some("8A".into()),
+            comments: Some("Downloaded from YouTube".into()),
+        };
+
+        let id = db.insert_track(&new_track).expect("Insert track should succeed");
+        assert!(id > 0);
+
+        let tracks = db.get_tracks(Some("YouTube"), None, None, None).unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].title, "Test YouTube Track");
+        assert_eq!(tracks[0].artist, "Test Artist");
+        assert_eq!(tracks[0].bpm, 128.0);
+    }
 }
