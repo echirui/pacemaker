@@ -918,7 +918,23 @@ function renderTrackTable(tracks) {
         deleteTrack(trackId, t.title || 'この曲');
         return;
       }
-      selectTrack(t);
+      selectTrack(t, false);
+    });
+
+    tr.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.btn-edit-track') || e.target.closest('.btn-del-track')) {
+        return;
+      }
+      if (activeTrack && ((activeTrack.id ?? activeTrack.track_id) === trackId)) {
+        if (audio.paused) {
+          audio.play().catch(console.warn);
+        } else {
+          audio.currentTime = 0;
+          audio.play().catch(console.warn);
+        }
+      } else {
+        selectTrack(t, true);
+      }
     });
 
     fragment.appendChild(tr);
@@ -1203,7 +1219,7 @@ function generateLightweightBars(track, waveformData) {
   return bars;
 }
 
-async function selectTrack(track) {
+async function selectTrack(track, autoplay = false) {
   if (!isDeviceConnected || !track) return;
   activeTrack = track;
   const trackId = track.id !== undefined ? track.id : track.track_id;
@@ -1216,13 +1232,13 @@ async function selectTrack(track) {
   // Stop previous track and reset playback controls immediately
   audio.pause();
   audio.currentTime = 0;
-  btnPlay.textContent = '▶ 再生';
+  btnPlay.textContent = autoplay ? '⏸ 一時停止' : '▶ 再生';
   btnPlay.disabled = true;
   playhead.style.left = '0%';
   deckTime.textContent = '0:00 / 0:00';
 
   deckTitle.textContent = track.title || 'Unknown Title';
-  deckArtist.textContent = '音声 & 波形データを読み込み中...';
+  deckArtist.textContent = autoplay ? '再生開始中...' : '音声 & 波形データを読み込み中...';
   if (btnEditCurrentTrack) btnEditCurrentTrack.classList.remove('hidden');
   deckBpm.textContent = `BPM: ${track.bpm ? Number(track.bpm).toFixed(1) : '--'}`;
   deckKey.textContent = `KEY: ${track.key || '--'}`;
@@ -1266,22 +1282,37 @@ async function selectTrack(track) {
     currentBlobUrl = URL.createObjectURL(blob);
     audio.src = currentBlobUrl;
     audio.load();
+    btnPlay.disabled = false;
+    deckArtist.textContent = track.artist || 'Unknown Artist';
 
-    // Decode real audio samples to produce high-definition 700-bar waveform
+    // Start playback immediately without waiting for waveform extraction
+    if (autoplay) {
+      audio.play().then(() => {
+        btnPlay.textContent = '⏸ 一時停止';
+      }).catch(playErr => {
+        console.warn('Autoplay error:', playErr);
+      });
+    }
+
+    // Decode real audio samples to produce high-definition 700-bar waveform in the background
     currentWaveformPeaks = await extractWaveformPeaks(arrayBuffer);
     drawWaveform();
-
-    deckArtist.textContent = track.artist || 'Unknown Artist';
-    btnPlay.disabled = false;
   } catch (err) {
     console.error('Audio load error:', err);
     // Fallback: Stream via pmaudio custom scheme
     audio.src = `pmaudio://localhost/tracks/${trackId}`;
     audio.load();
     deckArtist.textContent = track.artist || 'Unknown Artist';
+    btnPlay.disabled = false;
+    if (autoplay) {
+      audio.play().then(() => {
+        btnPlay.textContent = '⏸ 一時停止';
+      }).catch(playErr => {
+        console.warn('Autoplay fallback error:', playErr);
+      });
+    }
     currentWaveformPeaks = generateFallbackBars(700);
     drawWaveform();
-    btnPlay.disabled = false;
   }
 
   btnJumpCue.disabled = false;
