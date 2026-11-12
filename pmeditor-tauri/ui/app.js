@@ -1,5 +1,6 @@
 // Pacemaker Editor Desktop (Tauri Native Client)
 let currentTracks = [];
+let currentCases = [];
 let activeTrack = null;
 let currentFilter = 'all';
 let sortCol = 'artist';
@@ -346,12 +347,25 @@ function initYoutubeAuthHandlers() {
   }
 }
 
+function updateYtModalDeviceStatus() {
+  const el = document.getElementById('ytDeviceStatusBanner');
+  if (!el) return;
+  if (isDeviceConnected) {
+    el.className = 'yt-device-status-banner online';
+    el.innerHTML = '<span>🟢 Pacemaker 実機接続中 — ワンクリックで実機へ直接転送・登録できます</span>';
+    if (ytTargetCaseSelect) ytTargetCaseSelect.disabled = false;
+  } else {
+    el.className = 'yt-device-status-banner offline';
+    el.innerHTML = '<span>🔌 Pacemaker 実機未接続 — 楽曲の検索・試聴が可能です（実機転送にはUSB接続が必要です）</span>';
+  }
+}
+
 function populateTargetCaseSelect() {
   if (!ytTargetCaseSelect) return;
   const currentVal = ytTargetCaseSelect.value;
   ytTargetCaseSelect.innerHTML = '<option value="">ライブラリ全体のみ (Case指定なし)</option>';
-  if (Array.isArray(cases)) {
-    cases.forEach(c => {
+  if (Array.isArray(currentCases)) {
+    currentCases.forEach(c => {
       const opt = document.createElement('option');
       opt.value = c.name;
       opt.textContent = `${c.name} (${c.track_count || 0}曲)`;
@@ -362,21 +376,10 @@ function populateTargetCaseSelect() {
 }
 
 async function openYtModal() {
-  if (!isDeviceConnected) {
-    const wantLogin = await showConfirmDialog(
-      '実機未接続',
-      'Pacemaker 実機が接続されていません。実機への楽曲転送はUSB接続が必要ですが、YouTube Musicのログイン設定を行いますか？',
-      '🔌',
-      '🔐 ログイン設定を開く'
-    );
-    if (wantLogin) {
-      openYtAuthModal();
-    }
-    return;
-  }
   populateTargetCaseSelect();
   ytModal.classList.remove('hidden');
   loadYoutubeAuthStatus();
+  updateYtModalDeviceStatus();
   setTimeout(() => {
     if (ytSearchInput) ytSearchInput.focus();
   }, 60);
@@ -469,7 +472,13 @@ function renderYtSearchResults(items) {
 
 async function handleAddTrackToPacemaker(btn, item) {
   if (!isDeviceConnected) {
-    showConfirmDialog('実機未接続', 'Pacemaker 実機が接続されていません。USBケーブルで実機を接続してください。', '🔌', '了解');
+    await showConfirmDialog(
+      '実機未接続',
+      'Pacemaker 実機が接続されていません。\nUSBケーブルで実機を接続してから楽曲を追加してください。',
+      '🔌',
+      '了解',
+      true
+    );
     return;
   }
 
@@ -483,10 +492,16 @@ async function handleAddTrackToPacemaker(btn, item) {
     await callCommand('import_youtube_track', {
       queryOrUrl: item.url || `https://www.youtube.com/watch?v=${item.id}`,
       caseName: caseName || null,
+      authMethod: null,
+      browserName: null,
     });
 
     btn.className = 'btn btn-sm btn-yt-add added';
     btn.innerHTML = '<span>✓ 追加完了</span>';
+
+    if (ytSearchResultsCount) {
+      ytSearchResultsCount.textContent = `✓ 「${item.title}」を Pacemaker に追加しました！`;
+    }
 
     // Refresh background state
     await loadDeviceStatus();
@@ -497,7 +512,13 @@ async function handleAddTrackToPacemaker(btn, item) {
     btn.disabled = false;
     btn.className = 'btn btn-sm btn-yt-add';
     btn.innerHTML = originalHtml;
-    alert(`転送に失敗しました: ${err.message || String(err)}`);
+    await showConfirmDialog(
+      '追加エラー',
+      `「${item.title}」の転送に失敗しました:\n${err.message || String(err)}`,
+      '⚠️',
+      '閉じる',
+      true
+    );
   }
 }
 
@@ -511,13 +532,22 @@ const btnConfirmCancel = document.getElementById('btnConfirmCancel');
 const btnConfirmCancelX = document.getElementById('btnConfirmCancelX');
 let confirmResolver = null;
 
-function showConfirmDialog(title, message, icon = '⚠️', okText = '削除する') {
+function showConfirmDialog(title, message, icon = '⚠️', okText = '削除する', hideCancel = false) {
   return new Promise((resolve) => {
     confirmResolver = resolve;
     confirmModalTitle.textContent = title;
     confirmModalIcon.textContent = icon;
     confirmModalMessage.textContent = message;
     btnConfirmOk.textContent = okText;
+    if (hideCancel) {
+      if (btnConfirmCancel) btnConfirmCancel.classList.add('hidden');
+      if (btnConfirmCancelX) btnConfirmCancelX.classList.add('hidden');
+      btnConfirmOk.className = 'btn btn-primary';
+    } else {
+      if (btnConfirmCancel) btnConfirmCancel.classList.remove('hidden');
+      if (btnConfirmCancelX) btnConfirmCancelX.classList.remove('hidden');
+      btnConfirmOk.className = 'btn btn-danger';
+    }
     confirmModal.classList.remove('hidden');
     btnConfirmOk.focus();
   });
@@ -525,6 +555,10 @@ function showConfirmDialog(title, message, icon = '⚠️', okText = '削除す�
 
 function closeConfirm(result) {
   confirmModal.classList.add('hidden');
+  if (btnConfirmCancel) btnConfirmCancel.classList.remove('hidden');
+  if (btnConfirmCancelX) btnConfirmCancelX.classList.remove('hidden');
+  btnConfirmOk.className = 'btn btn-danger';
+  btnConfirmOk.textContent = '削除する';
   if (confirmResolver) {
     confirmResolver(result);
     confirmResolver = null;
@@ -744,6 +778,7 @@ async function loadDeviceStatus() {
     renderDisconnectedState();
     resetDeckPlayer();
   } finally {
+    updateYtModalDeviceStatus();
     isCheckingDevice = false;
   }
 }
@@ -751,10 +786,14 @@ async function loadDeviceStatus() {
 async function loadCases() {
   if (!isDeviceConnected) {
     caseList.innerHTML = '<li class="empty-state-small" style="padding: 10px 14px; color: #78909c; font-size: 12px; font-style: italic;">実機未接続</li>';
+    currentCases = [];
+    populateTargetCaseSelect();
     return;
   }
   try {
     const cases = await callCommand('get_cases');
+    currentCases = Array.isArray(cases) ? cases : [];
+    populateTargetCaseSelect();
     caseList.innerHTML = '';
     if (Array.isArray(cases)) {
       cases.forEach(c => {
@@ -1581,8 +1620,13 @@ function setupEvents() {
     fileInput.addEventListener('click', (e) => {
       if (!isDeviceConnected) {
         e.preventDefault();
-        showConfirmDialog('実機未接続', 'Pacemaker 実機が接続されていません。USBケーブルで実機を接続してから楽曲を追加してください。', '🔌', '了解');
+        showConfirmDialog('実機未接続', 'Pacemaker 実機が接続されていません。USBケーブルで実機を接続してから楽曲を追加してください。', '🔌', '了解', true);
       }
+    });
+    fileInput.addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files || []);
+      fileInput.value = '';
+      await handleLocalFiles(files);
     });
   }
 
@@ -1691,6 +1735,60 @@ function setupEvents() {
   });
 }
 
+async function handleLocalFiles(files) {
+  if (!files || files.length === 0) return;
+  if (!isDeviceConnected) {
+    await showConfirmDialog(
+      '実機未接続',
+      'Pacemaker 実機が接続されていません。\nUSBケーブルで実機を接続してから楽曲を追加してください。',
+      '🔌',
+      '了解',
+      true
+    );
+    return;
+  }
+
+  let successCount = 0;
+  let failCount = 0;
+  for (const file of files) {
+    try {
+      const buffer = await file.arrayBuffer();
+      const bytes = Array.from(new Uint8Array(buffer));
+      await callCommand('import_local_track', {
+        fileName: file.name,
+        fileBytes: bytes,
+        caseName: null,
+      });
+      successCount++;
+    } catch (e) {
+      console.error(`Failed to import local file ${file.name}:`, e);
+      failCount++;
+    }
+  }
+
+  await loadDeviceStatus();
+  await loadCases();
+  await loadTracks();
+
+  if (failCount > 0) {
+    await showConfirmDialog(
+      '楽曲の追加結果',
+      `${successCount} 曲を追加しました（${failCount} 曲が失敗しました）。`,
+      '⚠️',
+      '閉じる',
+      true
+    );
+  } else if (successCount > 0) {
+    await showConfirmDialog(
+      '追加完了',
+      `${successCount} 曲を Pacemaker 実機に正常に追加・登録しました！`,
+      '✓',
+      '了解',
+      true
+    );
+  }
+}
+
 function initDragDrop() {
   window.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -1704,13 +1802,11 @@ function initDragDrop() {
     if (e.relatedTarget === null) dropOverlay.classList.add('hidden');
   });
 
-  dropOverlay.addEventListener('drop', (e) => {
+  dropOverlay.addEventListener('drop', async (e) => {
     e.preventDefault();
     dropOverlay.classList.add('hidden');
-    if (!isDeviceConnected) {
-      showConfirmDialog('実機未接続', 'Pacemaker 実機が接続されていません。USBケーブルで実機を接続してから楽曲を追加してください。', '🔌', '了解');
-      return;
-    }
+    const files = Array.from(e.dataTransfer ? e.dataTransfer.files : []);
+    await handleLocalFiles(files);
   });
 }
 

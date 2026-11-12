@@ -1377,3 +1377,33 @@ body {
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* Device Status Banner inside YouTube Search Modal */
+.yt-device-status-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  margin-bottom: 12px;
+  transition: all 0.2s;
+}
+
+.yt-device-status-banner.online {
+  background: rgba(0, 229, 255, 0.08);
+  border: 1px solid rgba(0, 229, 255, 0.25);
+  color: #00e5ff;
+}
+
+.yt-device-status-banner.offline {
+  background: rgba(255, 171, 0, 0.1);
+  border: 1px solid rgba(255, 171, 0, 0.3);
+  color: #ffab00;
+}
+
+/* Confirm and Prompt dialogs must sit on top of any active modal */
+#confirmModal,
+#promptModal {
+  z-index: 350;
+}

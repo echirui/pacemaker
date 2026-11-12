@@ -378,6 +378,14 @@ fn inspect_firmware(path: String) -> Result<PfwInfo, String> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalImportItem {
+    pub track_id: i64,
+    pub title: String,
+    pub artist: String,
+    pub file_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct YoutubeImportItem {
     pub track_id: i64,
     pub title: String,
@@ -1001,6 +1009,91 @@ async fn import_youtube_track(
     })
 }
 
+#[command]
+fn import_local_track(
+    file_name: String,
+    file_bytes: Vec<u8>,
+    case_name: Option<String>,
+) -> Result<LocalImportItem, String> {
+    let vol = resolve_pacemaker_volume()
+        .ok_or_else(|| "Pacemaker 実機が接続されていません。USBケーブルで実機を接続してください。".to_string())?;
+
+    if file_bytes.is_empty() {
+        return Err("ファイルデータが空です。".to_string());
+    }
+
+    let file_size = file_bytes.len() as u64;
+    let ext = Path::new(&file_name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("mp3")
+        .to_ascii_lowercase();
+
+    let raw_title = Path::new(&file_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Unknown Track")
+        .to_string();
+
+    let paths = pacemaker_core::hasher::generate_track_paths(&raw_title, file_size, &ext);
+    let dest_path = vol.join(&paths.relative_music_path);
+
+    if let Some(parent) = dest_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
+    fs::write(&dest_path, &file_bytes)
+        .map_err(|e| format!("Pacemaker ストレージへのファイル書き込みに失敗しました: {}", e))?;
+
+    let str_path = dest_path.with_extension("str");
+    let str_content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<TrackAnalysedData>\n\t<normalizeFactor>1</normalizeFactor>\n\t<beatStartOffset>0</beatStartOffset>\n\t<realBeatLocations></realBeatLocations>\n</TrackAnalysedData>\n";
+    let _ = fs::write(&str_path, str_content);
+
+    let mut target_case_id: Option<i64> = None;
+    if let Some(ref cname) = case_name {
+        let trimmed_case = cname.trim();
+        if !trimmed_case.is_empty() {
+            let cid = with_db(|db| db.create_case(trimmed_case).map_err(|e| e.to_string()))?;
+            target_case_id = Some(cid);
+        }
+    }
+
+    let track_input = pacemaker_core::db::NewTrackInput {
+        title: raw_title.clone(),
+        artist: "Local Artist".into(),
+        album: Some("Imported".into()),
+        genre: None,
+        year: Some(2026),
+        play_time_secs: 180,
+        file_size,
+        bit_rate: 320,
+        sample_rate: 44100,
+        format: format!("Audio ({})", ext.to_uppercase()),
+        location: paths.virtual_location.clone(),
+        bpm: None,
+        key: None,
+        comments: Some(format!("Local import: {}", file_name)),
+    };
+
+    let track_id = with_db(|db| {
+        let id = db.insert_track(&track_input)
+            .map_err(|e| format!("Database insert error: {}", e))?;
+        if let Some(cid) = target_case_id {
+            let _ = db.add_track_to_case(cid, id);
+        }
+        Ok(id)
+    })?;
+
+    touch_syncfile(&vol);
+
+    Ok(LocalImportItem {
+        track_id,
+        title: raw_title,
+        artist: "Local Artist".into(),
+        file_path: dest_path.display().to_string(),
+    })
+}
+
 fn serve_audio_request(req: tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8>> {
     let path = req.uri().path();
     // Path format: /tracks/{track_id}
@@ -1124,6 +1217,7 @@ pub fn run() {
             get_track_audio_bytes,
             inspect_firmware,
             import_youtube_track,
+            import_local_track,
             search_youtube,
             get_youtube_auth_status,
             save_youtube_cookies,
@@ -1185,6 +1279,13 @@ mod tests {
         let res = tauri::async_runtime::block_on(search_youtube("".to_string(), None)).expect("Search should succeed");
         assert!(res.success);
         assert!(res.results.is_empty());
+    }
+
+    #[test]
+    fn test_import_local_track_validation() {
+        // Empty bytes should return error
+        let res = import_local_track("test.mp3".to_string(), Vec::new(), None);
+        assert!(res.is_err(), "Empty file bytes should return Err");
     }
 }
 
