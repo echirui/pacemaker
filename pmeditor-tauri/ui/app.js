@@ -84,6 +84,30 @@ const ytTargetCaseSelect = document.getElementById('ytTargetCaseSelect');
 const ytResultsContainer = document.getElementById('ytResultsContainer');
 const ytSearchResultsCount = document.getElementById('ytSearchResultsCount');
 
+// Comparison Split-View Elements in YouTube Modal
+const compareMatchBanner = document.getElementById('compareMatchBanner');
+const compareMatchIcon = document.getElementById('compareMatchIcon');
+const compareMatchText = document.getElementById('compareMatchText');
+const leftTracksCountBadge = document.getElementById('leftTracksCountBadge');
+const btnSortLeftTitle = document.getElementById('btnSortLeftTitle');
+const btnSortLeftArtist = document.getElementById('btnSortLeftArtist');
+const filterLeftInput = document.getElementById('filterLeftInput');
+const leftTracksList = document.getElementById('leftTracksList');
+const rightTracksCountBadge = document.getElementById('rightTracksCountBadge');
+const btnSortRightRelevance = document.getElementById('btnSortRightRelevance');
+const btnSortRightTitle = document.getElementById('btnSortRightTitle');
+const btnSortRightArtist = document.getElementById('btnSortRightArtist');
+
+// Comparison Split-View State
+let leftSortKey = 'title'; // 'title' | 'artist'
+let leftSortAsc = true;
+let filterLeftQuery = '';
+let currentYtResults = [];
+let rightSortKey = 'relevance'; // 'relevance' | 'title' | 'artist'
+let rightSortAsc = true;
+let selectedRightTrack = null;
+let lastAddedTrackTitle = null;
+
 // YouTube Dedicated Auth Modal Elements
 const btnOpenYtAuthModal = document.getElementById('btnOpenYtAuthModal');
 const navOpenYtLogin = document.getElementById('navOpenYtLogin');
@@ -377,11 +401,39 @@ function populateTargetCaseSelect() {
   if (currentVal) ytTargetCaseSelect.value = currentVal;
 }
 
+function normalizeSongTitle(title) {
+  if (!title) return '';
+  return String(title)
+    .toLowerCase()
+    .replace(/[\(\[\{【](?:official\s*(?:music\s*)?video|mv|official\s*audio|audio|lyrics?|lyric\s*video|remaster(?:ed)?|full\s*(?:song|album)|hd|4k|hq|music\s*video)[\)\]\}】]/gi, '')
+    .replace(/(?:feat\.?|ft\.?)\s+[^\-\(\)\[\]]+/gi, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 async function openYtModal() {
   populateTargetCaseSelect();
   ytModal.classList.remove('hidden');
   loadYoutubeAuthStatus();
   updateYtModalDeviceStatus();
+
+  // If tracks aren't loaded yet, try loading
+  if (!currentTracks || currentTracks.length === 0) {
+    if (isDeviceConnected) {
+      await loadTracks();
+    }
+  }
+  renderLeftCompareList();
+
+  if (selectedRightTrack) {
+    highlightMatchingLeftTracks(selectedRightTrack);
+  } else if (compareMatchBanner && compareMatchIcon && compareMatchText) {
+    compareMatchBanner.className = 'compare-match-banner';
+    compareMatchIcon.textContent = '💡';
+    compareMatchText.innerHTML = '右の「追加したい候補」から曲をクリックすると、左の既存ライブラリと同名曲・配置位置を自動比較して並べて表示します';
+  }
+
   setTimeout(() => {
     if (ytSearchInput) ytSearchInput.focus();
   }, 60);
@@ -389,6 +441,241 @@ async function openYtModal() {
 
 function closeYtModal() {
   ytModal.classList.add('hidden');
+}
+
+function renderLeftCompareList() {
+  if (!leftTracksList) return;
+  leftTracksList.innerHTML = '';
+
+  let tracks = [...currentTracks];
+
+  if (filterLeftQuery) {
+    tracks = tracks.filter(t => {
+      const title = (t.title || '').toLowerCase();
+      const artist = (t.artist || '').toLowerCase();
+      return title.includes(filterLeftQuery) || artist.includes(filterLeftQuery);
+    });
+  }
+
+  tracks.sort((a, b) => {
+    let valA = '';
+    let valB = '';
+    if (leftSortKey === 'artist') {
+      valA = (a.artist || a.title || '').toLowerCase();
+      valB = (b.artist || b.title || '').toLowerCase();
+    } else {
+      valA = (a.title || '').toLowerCase();
+      valB = (b.title || '').toLowerCase();
+    }
+    const cmp = valA.localeCompare(valB, 'ja', { numeric: true, sensitivity: 'base' });
+    return leftSortAsc ? cmp : -cmp;
+  });
+
+  if (leftTracksCountBadge) {
+    leftTracksCountBadge.textContent = `${tracks.length}曲`;
+  }
+
+  if (tracks.length === 0) {
+    leftTracksList.innerHTML = `
+      <div class="yt-empty-state" style="padding: 30px 10px;">
+        <span style="font-size: 22px;">📁</span>
+        <span>${filterLeftQuery ? '条件に一致する楽曲が見つかりません' : '実機に登録されている楽曲がありません'}</span>
+      </div>
+    `;
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  tracks.forEach(t => {
+    const card = document.createElement('div');
+    card.className = 'left-track-card';
+    const trackId = t.id !== undefined ? t.id : t.track_id;
+    card.dataset.trackId = String(trackId);
+    card.dataset.title = t.title || '';
+    card.dataset.artist = t.artist || '';
+    card.dataset.normTitle = normalizeSongTitle(t.title);
+    card.dataset.sortVal = (leftSortKey === 'artist' ? (t.artist || t.title || '') : (t.title || '')).toLowerCase();
+
+    const isJustAdded = lastAddedTrackTitle && (t.title === lastAddedTrackTitle || card.dataset.normTitle === normalizeSongTitle(lastAddedTrackTitle));
+    if (isJustAdded) {
+      card.classList.add('just-added');
+    }
+
+    const durationText = t.play_time_secs ? formatTime(t.play_time_secs) : '';
+    const bpmText = t.bpm ? `${Math.round(t.bpm)} BPM` : '';
+    const metaParts = [t.artist || 'Unknown Artist', durationText, bpmText].filter(Boolean).join(' • ');
+
+    card.innerHTML = `
+      <div class="left-track-icon">🎵</div>
+      <div class="left-track-info">
+        <div class="left-track-title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</div>
+        <div class="left-track-meta" title="${escapeHtml(metaParts)}">${escapeHtml(metaParts)}</div>
+      </div>
+      <div class="left-track-badges">
+        ${isJustAdded ? '<span class="left-track-badge-match" style="background:rgba(0,230,118,0.25);border-color:#00e676;">🆕 追加完了</span>' : ''}
+      </div>
+    `;
+
+    fragment.appendChild(card);
+  });
+
+  leftTracksList.appendChild(fragment);
+
+  // If a candidate on the right is selected, re-highlight left matches!
+  if (selectedRightTrack) {
+    highlightMatchingLeftTracks(selectedRightTrack);
+  }
+}
+
+function selectRightCandidate(item, rowEl) {
+  selectedRightTrack = item;
+
+  // Clear previous selected on right
+  const prevSelected = ytResultsContainer ? ytResultsContainer.querySelectorAll('.yt-result-item.selected-candidate') : [];
+  prevSelected.forEach(el => el.classList.remove('selected-candidate'));
+
+  if (rowEl) {
+    rowEl.classList.add('selected-candidate');
+  }
+
+  highlightMatchingLeftTracks(item);
+}
+
+function highlightMatchingLeftTracks(rightItem) {
+  if (!leftTracksList || !rightItem) return;
+
+  const cards = leftTracksList.querySelectorAll('.left-track-card');
+  if (cards.length === 0) return;
+
+  // Reset classes and badges
+  cards.forEach(c => {
+    c.classList.remove('matched-exact', 'matched-adjacent');
+    const badgeWrap = c.querySelector('.left-track-badges');
+    if (badgeWrap) {
+      const badges = badgeWrap.querySelectorAll('.left-track-badge-match, .left-track-badge-adjacent');
+      badges.forEach(b => {
+        if (!b.textContent.includes('🆕')) b.remove();
+      });
+    }
+  });
+
+  const normRight = normalizeSongTitle(rightItem.title);
+  const matchedCards = [];
+
+  cards.forEach(c => {
+    const leftNorm = c.dataset.normTitle || '';
+    let isMatch = false;
+
+    if (leftNorm && normRight) {
+      if (leftNorm === normRight) {
+        isMatch = true;
+      } else if (leftNorm.length >= 4 && normRight.includes(leftNorm)) {
+        isMatch = true;
+      } else if (normRight.length >= 4 && leftNorm.includes(normRight)) {
+        isMatch = true;
+      }
+    }
+
+    if (isMatch) {
+      matchedCards.push(c);
+      c.classList.add('matched-exact');
+      const badgeWrap = c.querySelector('.left-track-badges');
+      if (badgeWrap && !badgeWrap.querySelector('.left-track-badge-match:not([style*="🆕"])')) {
+        const badge = document.createElement('span');
+        badge.className = 'left-track-badge-match';
+        badge.textContent = '✓ 同名曲あり';
+        badgeWrap.appendChild(badge);
+      }
+    }
+  });
+
+  if (matchedCards.length > 0) {
+    const firstMatch = matchedCards[0];
+    firstMatch.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    if (compareMatchBanner && compareMatchIcon && compareMatchText) {
+      compareMatchBanner.className = 'compare-match-banner match-found';
+      compareMatchIcon.textContent = '⚠️';
+      const extraCount = matchedCards.length > 1 ? `（計${matchedCards.length}件）` : '';
+      compareMatchText.innerHTML = `実機ライブラリに同名曲が見つかりました: <strong>「${escapeHtml(firstMatch.dataset.title)}」</strong> by ${escapeHtml(firstMatch.dataset.artist || 'Unknown')} ${extraCount} (重複登録にご注意ください)`;
+    }
+  } else {
+    // No match: find adjacent items (前後の曲名) based on left list sort order
+    const targetVal = (leftSortKey === 'artist' ? (rightItem.artist || rightItem.title || '') : rightItem.title).toLowerCase();
+
+    let prevCard = null;
+    let nextCard = null;
+
+    cards.forEach(c => {
+      const cardVal = c.dataset.sortVal || '';
+      const cmp = cardVal.localeCompare(targetVal, 'ja', { numeric: true, sensitivity: 'base' });
+      if (cmp < 0) {
+        prevCard = c;
+      } else if (cmp >= 0 && !nextCard) {
+        nextCard = c;
+      }
+    });
+
+    if (prevCard) {
+      prevCard.classList.add('matched-adjacent');
+      const badgeWrap = prevCard.querySelector('.left-track-badges');
+      if (badgeWrap) {
+        const b = document.createElement('span');
+        b.className = 'left-track-badge-adjacent';
+        b.textContent = '▲ 直前の曲';
+        badgeWrap.appendChild(b);
+      }
+    }
+
+    if (nextCard) {
+      nextCard.classList.add('matched-adjacent');
+      const badgeWrap = nextCard.querySelector('.left-track-badges');
+      if (badgeWrap) {
+        const b = document.createElement('span');
+        b.className = 'left-track-badge-adjacent';
+        b.textContent = '▼ 直後の曲';
+        badgeWrap.appendChild(b);
+      }
+    }
+
+    const scrollTo = prevCard || nextCard;
+    if (scrollTo) {
+      scrollTo.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    if (compareMatchBanner && compareMatchIcon && compareMatchText) {
+      compareMatchBanner.className = 'compare-match-banner match-none';
+      compareMatchIcon.textContent = '✨';
+      const prevName = prevCard ? `「${escapeHtml(prevCard.dataset.title)}」` : '（先頭）';
+      const nextName = nextCard ? `「${escapeHtml(nextCard.dataset.title)}」` : '（末尾）';
+      compareMatchText.innerHTML = `実機に未登録の新曲です。ソート位置: <strong>${prevName}</strong> と <strong>${nextName}</strong> の間に配置されます`;
+    }
+  }
+}
+
+function sortAndRenderRightList() {
+  if (!currentYtResults || currentYtResults.length === 0) {
+    if (rightTracksCountBadge) rightTracksCountBadge.textContent = '0件';
+    return;
+  }
+
+  let items = [...currentYtResults];
+
+  if (rightSortKey === 'title') {
+    items.sort((a, b) => {
+      const cmp = (a.title || '').localeCompare(b.title || '', 'ja', { numeric: true, sensitivity: 'base' });
+      return rightSortAsc ? cmp : -cmp;
+    });
+  } else if (rightSortKey === 'artist') {
+    items.sort((a, b) => {
+      const valA = (a.artist || a.title || '').toLowerCase();
+      const valB = (b.artist || b.title || '').toLowerCase();
+      const cmp = valA.localeCompare(valB, 'ja', { numeric: true, sensitivity: 'base' });
+      return rightSortAsc ? cmp : -cmp;
+    });
+  }
+
+  renderYtSearchResults(items);
 }
 
 async function handleYtSearch(e) {
@@ -405,6 +692,7 @@ async function handleYtSearch(e) {
     </div>
   `;
   if (ytSearchResultsCount) ytSearchResultsCount.textContent = '';
+  if (rightTracksCountBadge) rightTracksCountBadge.textContent = '検索中...';
 
   try {
     const res = await callCommand('search_youtube', { query, limit: 15 });
@@ -412,6 +700,7 @@ async function handleYtSearch(e) {
     btnYtSearch.innerHTML = '<span>🔍 検索</span>';
 
     if (!res || !res.results || res.results.length === 0) {
+      currentYtResults = [];
       ytResultsContainer.innerHTML = `
         <div class="yt-empty-state">
           <span style="font-size: 28px;">🔍</span>
@@ -419,15 +708,21 @@ async function handleYtSearch(e) {
         </div>
       `;
       if (ytSearchResultsCount) ytSearchResultsCount.textContent = '0 件';
+      if (rightTracksCountBadge) rightTracksCountBadge.textContent = '0件';
       return;
     }
 
+    currentYtResults = res.results;
     if (ytSearchResultsCount) ytSearchResultsCount.textContent = `${res.results.length} 件の楽曲が見つかりました`;
-    renderYtSearchResults(res.results);
+    if (rightTracksCountBadge) rightTracksCountBadge.textContent = `${res.results.length}件`;
+    
+    sortAndRenderRightList();
   } catch (err) {
     console.error('YouTube search failed:', err);
     btnYtSearch.disabled = false;
     btnYtSearch.innerHTML = '<span>🔍 検索</span>';
+    currentYtResults = [];
+    if (rightTracksCountBadge) rightTracksCountBadge.textContent = '0件';
     ytResultsContainer.innerHTML = `
       <div class="yt-empty-state">
         <span style="font-size: 28px; color: #ff5252;">⚠️</span>
@@ -439,10 +734,19 @@ async function handleYtSearch(e) {
 
 function renderYtSearchResults(items) {
   ytResultsContainer.innerHTML = '';
-  items.forEach(item => {
+  if (!items || items.length === 0) return;
+
+  const fragment = document.createDocumentFragment();
+  let firstRow = null;
+
+  items.forEach((item, idx) => {
     const row = document.createElement('div');
     row.className = 'yt-result-item';
     row.dataset.id = item.id;
+
+    if (selectedRightTrack && (selectedRightTrack.id === item.id || selectedRightTrack.url === item.url)) {
+      row.classList.add('selected-candidate');
+    }
 
     const thumbHtml = item.thumbnail_url 
       ? `<img src="${escapeHtml(item.thumbnail_url)}" class="yt-item-thumb" alt="" loading="lazy">`
@@ -458,18 +762,32 @@ function renderYtSearchResults(items) {
         <div class="yt-item-artist" title="${escapeHtml(item.artist)}">${escapeHtml(item.artist)}</div>
       </div>
       <div class="yt-item-action">
-        <button type="button" class="btn btn-sm btn-yt-add" data-id="${escapeHtml(item.id)}" data-url="${escapeHtml(item.url)}" data-title="${escapeHtml(item.title)}">
+        <button type="button" class="btn btn-sm btn-yt-add" data-id="${escapeHtml(item.id)}" data-url="${escapeHtml(item.url)}" data-title="${escapeHtml(item.title)}" title="Pacemaker 実機へダウンロード・転送">
           <span class="btn-add-icon">⬅️</span>
           <span class="btn-add-label">追加 (+ Add)</span>
         </button>
       </div>
     `;
 
+    // Click candidate to select & compare
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.btn-yt-add')) return;
+      selectRightCandidate(item, row);
+    });
+
     const btnAdd = row.querySelector('.btn-yt-add');
     btnAdd.addEventListener('click', () => handleAddTrackToPacemaker(btnAdd, item));
 
-    ytResultsContainer.appendChild(row);
+    if (idx === 0) firstRow = row;
+    fragment.appendChild(row);
   });
+
+  ytResultsContainer.appendChild(fragment);
+
+  // If nothing is selected yet, automatically select the first candidate so the comparison is immediately shown
+  if (!selectedRightTrack && items.length > 0 && firstRow) {
+    selectRightCandidate(items[0], firstRow);
+  }
 }
 
 async function handleAddTrackToPacemaker(btn, item) {
@@ -505,10 +823,19 @@ async function handleAddTrackToPacemaker(btn, item) {
       ytSearchResultsCount.textContent = `✓ 「${item.title}」を Pacemaker に追加しました！`;
     }
 
-    // Refresh background state
+    lastAddedTrackTitle = item.title;
+
+    // Refresh background state and update left compare list
     await loadDeviceStatus();
     await loadCases();
     await loadTracks();
+    renderLeftCompareList();
+
+    // Scroll to the newly added track in the left list
+    const addedCard = leftTracksList ? leftTracksList.querySelector('.left-track-card.just-added') : null;
+    if (addedCard) {
+      addedCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
   } catch (err) {
     console.error('Import failed:', err);
     btn.disabled = false;
@@ -1709,7 +2036,7 @@ function setupEvents() {
     });
   }
 
-  // YouTube / YouTube Music Import Modal Events
+  // YouTube / YouTube Music Import & Compare Modal Events
   if (btnOpenYtModal) btnOpenYtModal.addEventListener('click', openYtModal);
   if (btnYtModalClose) btnYtModalClose.addEventListener('click', closeYtModal);
   if (btnYtModalCloseBottom) btnYtModalCloseBottom.addEventListener('click', closeYtModal);
@@ -1719,6 +2046,116 @@ function setupEvents() {
       if (e.target === ytModal) closeYtModal();
     });
   }
+
+  // Left comparison column events (Sort & Filter)
+  if (btnSortLeftTitle) {
+    btnSortLeftTitle.addEventListener('click', () => {
+      if (leftSortKey === 'title') {
+        leftSortAsc = !leftSortAsc;
+      } else {
+        leftSortKey = 'title';
+        leftSortAsc = true;
+      }
+      btnSortLeftTitle.classList.add('active');
+      const arrow = btnSortLeftTitle.querySelector('.sort-arrow');
+      if (arrow) arrow.textContent = leftSortAsc ? '↑' : '↓';
+      if (btnSortLeftArtist) {
+        btnSortLeftArtist.classList.remove('active');
+        const artArrow = btnSortLeftArtist.querySelector('.sort-arrow');
+        if (artArrow) artArrow.textContent = '↕';
+      }
+      renderLeftCompareList();
+    });
+  }
+
+  if (btnSortLeftArtist) {
+    btnSortLeftArtist.addEventListener('click', () => {
+      if (leftSortKey === 'artist') {
+        leftSortAsc = !leftSortAsc;
+      } else {
+        leftSortKey = 'artist';
+        leftSortAsc = true;
+      }
+      btnSortLeftArtist.classList.add('active');
+      const arrow = btnSortLeftArtist.querySelector('.sort-arrow');
+      if (arrow) arrow.textContent = leftSortAsc ? '↑' : '↓';
+      if (btnSortLeftTitle) {
+        btnSortLeftTitle.classList.remove('active');
+        const titArrow = btnSortLeftTitle.querySelector('.sort-arrow');
+        if (titArrow) titArrow.textContent = '↕';
+      }
+      renderLeftCompareList();
+    });
+  }
+
+  if (filterLeftInput) {
+    filterLeftInput.addEventListener('input', () => {
+      filterLeftQuery = (filterLeftInput.value || '').trim().toLowerCase();
+      renderLeftCompareList();
+    });
+  }
+
+  // Right comparison column events (Sort)
+  if (btnSortRightRelevance) {
+    btnSortRightRelevance.addEventListener('click', () => {
+      rightSortKey = 'relevance';
+      btnSortRightRelevance.classList.add('active');
+      if (btnSortRightTitle) {
+        btnSortRightTitle.classList.remove('active');
+        const a = btnSortRightTitle.querySelector('.sort-arrow');
+        if (a) a.textContent = '↕';
+      }
+      if (btnSortRightArtist) {
+        btnSortRightArtist.classList.remove('active');
+        const a = btnSortRightArtist.querySelector('.sort-arrow');
+        if (a) a.textContent = '↕';
+      }
+      sortAndRenderRightList();
+    });
+  }
+
+  if (btnSortRightTitle) {
+    btnSortRightTitle.addEventListener('click', () => {
+      if (rightSortKey === 'title') {
+        rightSortAsc = !rightSortAsc;
+      } else {
+        rightSortKey = 'title';
+        rightSortAsc = true;
+      }
+      btnSortRightTitle.classList.add('active');
+      const a = btnSortRightTitle.querySelector('.sort-arrow');
+      if (a) a.textContent = rightSortAsc ? '↑' : '↓';
+      if (btnSortRightRelevance) btnSortRightRelevance.classList.remove('active');
+      if (btnSortRightArtist) {
+        btnSortRightArtist.classList.remove('active');
+        const artA = btnSortRightArtist.querySelector('.sort-arrow');
+        if (artA) artA.textContent = '↕';
+      }
+      sortAndRenderRightList();
+    });
+  }
+
+  if (btnSortRightArtist) {
+    btnSortRightArtist.addEventListener('click', () => {
+      if (rightSortKey === 'artist') {
+        rightSortAsc = !rightSortAsc;
+      } else {
+        rightSortKey = 'artist';
+        rightSortAsc = true;
+      }
+      btnSortRightArtist.classList.add('active');
+      const a = btnSortRightArtist.querySelector('.sort-arrow');
+      if (a) a.textContent = rightSortAsc ? '↑' : '↓';
+      if (btnSortRightRelevance) btnSortRightRelevance.classList.remove('active');
+      if (btnSortRightTitle) {
+        btnSortRightTitle.classList.remove('active');
+        const titA = btnSortRightTitle.querySelector('.sort-arrow');
+        if (titA) titA.textContent = '↕';
+      }
+      sortAndRenderRightList();
+    });
+  }
+
   initYoutubeAuthHandlers();
 
   // Global Keydown Handler for Modals
@@ -1732,7 +2169,7 @@ function setupEvents() {
         closeEditModal();
       } else if (ytAuthModal && !ytAuthModal.classList.contains('hidden')) {
         closeYtAuthModal();
-      } else if (ytModal && !ytModal.classList.contains('hidden') && !btnYtSubmit.disabled) {
+      } else if (ytModal && !ytModal.classList.contains('hidden') && (!btnYtSearch || !btnYtSearch.disabled)) {
         closeYtModal();
       }
     }

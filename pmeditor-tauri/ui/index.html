@@ -35,9 +35,9 @@
           <span id="headerAuthText">YouTube ログイン設定</span>
           <span id="headerAuthBadge" class="nav-badge guest">未ログイン</span>
         </button>
-        <button id="btnOpenYtModal" class="btn btn-yt" title="YouTube / YouTube Music から楽曲をダウンロードして追加">
+        <button id="btnOpenYtModal" class="btn btn-yt" title="YouTube / YouTube Music から楽曲を検索・追加・比較">
           <span class="yt-icon">▶</span>
-          <span>YouTube Music から追加</span>
+          <span>YouTube Music から追加・比較</span>
         </button>
         <label class="btn btn-primary btn-import" for="fileInput" title="PCローカルの音楽ファイル（MP3/WAV/FLAC等）を追加">
           <span>＋ ローカル楽曲を追加</span>
@@ -250,59 +250,119 @@
       </div>
     </div>
 
-    <!-- YouTube / YouTube Music Import Modal -->
+    <!-- YouTube / YouTube Music Import & Library Comparison Modal -->
     <div id="ytModal" class="modal-overlay hidden">
       <div class="modal-dialog modal-dialog-yt">
         <div class="modal-header">
           <div class="modal-title-group">
             <span class="modal-icon" style="color: #ff0055;">▶</span>
-            <h3 class="modal-title">YouTube / YouTube Music から検索・追加</h3>
+            <h3 class="modal-title">楽曲追加・ライブラリ比較モード (YouTube Music)</h3>
           </div>
           <button type="button" id="btnYtModalClose" class="btn-icon btn-modal-close" title="閉じる">×</button>
         </div>
         <div class="modal-body">
-          <!-- YouTube Music Authentication Quick Status -->
-          <div class="yt-auth-banner" id="ytImportAuthBanner">
-            <div class="yt-auth-status-info">
-              <span id="ytImportAuthBadge" class="yt-auth-badge guest">⚪ 未ログイン (ゲスト)</span>
-              <span id="ytImportAuthDetail" class="yt-auth-detail">非公開プレイリストや高音質音源を取得するにはログインしてください</span>
+          <!-- Top Row: Auth Status & Device Connection Status -->
+          <div class="yt-modal-top-bar">
+            <div class="yt-auth-banner" id="ytImportAuthBanner">
+              <div class="yt-auth-status-info">
+                <span id="ytImportAuthBadge" class="yt-auth-badge guest">⚪ 未ログイン (ゲスト)</span>
+                <span id="ytImportAuthDetail" class="yt-auth-detail">非公開プレイリストや高音質音源を取得するにはログインしてください</span>
+              </div>
+              <button type="button" id="btnOpenAuthFromImport" class="btn btn-sm btn-secondary">
+                <span>🔐 ログイン設定</span>
+              </button>
             </div>
-            <button type="button" id="btnOpenAuthFromImport" class="btn btn-sm btn-secondary">
-              <span>🔐 ログイン設定</span>
-            </button>
-          </div>
-
-          <!-- Pacemaker Device Connection Status Banner in Modal -->
-          <div id="ytDeviceStatusBanner" class="yt-device-status-banner online">
-            <span>🟢 Pacemaker 実機接続中 — ワンクリックで実機へ直接転送・登録できます</span>
-          </div>
-
-          <!-- Search Form -->
-          <form id="ytSearchForm" class="yt-search-bar">
-            <input type="text" id="ytSearchInput" placeholder="曲名、アーティスト名、または YouTube Music の URL を入力..." autofocus required>
-            <button type="submit" id="btnYtSearch" class="btn btn-primary" style="background: linear-gradient(135deg, #ff0055, #ff0000); min-width: 90px;">
-              <span>🔍 検索</span>
-            </button>
-          </form>
-
-          <!-- Playlist (Case) Selector -->
-          <div class="yt-case-selector-row">
-            <label for="ytTargetCaseSelect">📁 追加先 Case (プレイリスト):</label>
-            <select id="ytTargetCaseSelect">
-              <option value="">ライブラリ全体のみ (Case指定なし)</option>
-            </select>
-          </div>
-
-          <!-- Search Results List -->
-          <div id="ytResultsContainer" class="yt-results-container">
-            <div class="yt-empty-state" id="ytSearchPlaceholder">
-              <span style="font-size: 28px;">🎵</span>
-              <span>曲名・アーティスト名（例: 「Daft Punk」や「Official髭男dism」）、<br>または YouTube Music の URL を入力して検索してください。<br>検索結果からワンクリックで Pacemaker 実機へ転送・登録できます。</span>
+            <div id="ytDeviceStatusBanner" class="yt-device-status-banner online">
+              <span>🟢 Pacemaker 実機接続中 — ワンクリックで実機へ直接転送・登録できます</span>
             </div>
           </div>
 
-          <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px;">
-            <span id="ytSearchResultsCount" style="font-size: 12px; color: #718096;"></span>
+          <!-- Search & Target Case Controls -->
+          <div class="yt-search-controls-row">
+            <form id="ytSearchForm" class="yt-search-bar">
+              <input type="text" id="ytSearchInput" placeholder="曲名、アーティスト名、または YouTube Music の URL を入力して検索..." autofocus required>
+              <button type="submit" id="btnYtSearch" class="btn btn-primary" style="background: linear-gradient(135deg, #ff0055, #ff0000); min-width: 90px;">
+                <span>🔍 検索</span>
+              </button>
+            </form>
+
+            <div class="yt-case-selector-row">
+              <label for="ytTargetCaseSelect">📁 追加先 Case:</label>
+              <select id="ytTargetCaseSelect">
+                <option value="">ライブラリ全体のみ (Case指定なし)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Comparison Match Notification Banner -->
+          <div id="compareMatchBanner" class="compare-match-banner">
+            <span id="compareMatchIcon" class="compare-match-icon">💡</span>
+            <span id="compareMatchText" class="compare-match-text">右の「追加したい候補」から曲をクリックして選択すると、左の既存ライブラリと同名曲・配置位置を自動比較して並べて表示します</span>
+          </div>
+
+          <!-- Two-Column Comparison Split View: Left (Existing) vs Right (Candidates) -->
+          <div class="compare-split-container">
+            <!-- Left Column: Existing Pacemaker Library -->
+            <div class="compare-column compare-column-left">
+              <div class="compare-column-header">
+                <div class="compare-col-title-group">
+                  <span class="compare-col-icon">📁</span>
+                  <span class="compare-col-title">実機ライブラリ (既存)</span>
+                  <span id="leftTracksCountBadge" class="compare-count-badge">0曲</span>
+                </div>
+                <div class="compare-sort-group">
+                  <span class="sort-label">ソート:</span>
+                  <button type="button" id="btnSortLeftTitle" class="btn-sort-toggle active" data-key="title" title="曲名順でソート">
+                    曲名 <span class="sort-arrow">↑</span>
+                  </button>
+                  <button type="button" id="btnSortLeftArtist" class="btn-sort-toggle" data-key="artist" title="アーティスト名順でソート">
+                    アーティスト <span class="sort-arrow">↕</span>
+                  </button>
+                </div>
+              </div>
+              <div class="compare-filter-bar">
+                <input type="text" id="filterLeftInput" placeholder="🔍 実機の既存曲を検索・絞り込み...">
+              </div>
+              <div id="leftTracksList" class="compare-tracks-list">
+                <!-- Dynamically populated with existing library tracks -->
+              </div>
+            </div>
+
+            <!-- Right Column: YouTube Music Search Candidates -->
+            <div class="compare-column compare-column-right">
+              <div class="compare-column-header">
+                <div class="compare-col-title-group">
+                  <span class="compare-col-icon">▶</span>
+                  <span class="compare-col-title">追加したい候補 (YouTube)</span>
+                  <span id="rightTracksCountBadge" class="compare-count-badge">0件</span>
+                </div>
+                <div class="compare-sort-group">
+                  <span class="sort-label">ソート:</span>
+                  <button type="button" id="btnSortRightRelevance" class="btn-sort-toggle active" data-key="relevance" title="検索適合順">
+                    適合順
+                  </button>
+                  <button type="button" id="btnSortRightTitle" class="btn-sort-toggle" data-key="title" title="曲名順でソート">
+                    曲名 <span class="sort-arrow">↕</span>
+                  </button>
+                  <button type="button" id="btnSortRightArtist" class="btn-sort-toggle" data-key="artist" title="アーティスト名順でソート">
+                    アーティスト <span class="sort-arrow">↕</span>
+                  </button>
+                </div>
+              </div>
+              <div class="compare-hint-bar">
+                <span>👈 曲を選択すると同名照合 / [⬅️ 追加] で実機へ直接転送</span>
+              </div>
+              <div id="ytResultsContainer" class="compare-tracks-list yt-results-container">
+                <div class="yt-empty-state" id="ytSearchPlaceholder">
+                  <span style="font-size: 28px;">🎵</span>
+                  <span>曲名・アーティスト名（例: 「Daft Punk」や「Official髭男dism」）、<br>または YouTube Music の URL を入力して検索してください。<br>検索結果から曲をクリックすると既存曲と同名照合し、ワンクリックで実機へ転送・登録できます。</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+            <span id="ytSearchResultsCount" style="font-size: 12px; color: #8fa3bf;"></span>
             <button type="button" id="btnYtModalCloseBottom" class="btn btn-secondary">閉じる</button>
           </div>
         </div>
