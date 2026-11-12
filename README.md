@@ -96,10 +96,37 @@
 
 ### 2. CLI ツールから転送 (`pacemaker-uploader`)
 ```bash
-# URL から転送
+# URL から転送 (保存済みCookieセッションがある場合は自動でログイン適用)
 cargo run --bin pacemaker_uploader -- import-yt "https://music.youtube.com/watch?v=XXXXXX"
 
-# 検索キーワードから直接ダウンロード & 転送
+# 検索キーワードから直接ダウンロード & 転送 (プレイリスト指定)
 cargo run --bin pacemaker_uploader -- import-yt "Arctic Monkeys R U Mine" --case "Rock"
+
+# ブラウザのCookieを指定して転送
+cargo run --bin pacemaker_uploader -- import-yt "https://music.youtube.com/playlist?list=LM" --cookies-from-browser chrome
+
+# カスタム Cookie ファイルを指定して転送
+cargo run --bin pacemaker_uploader -- import-yt "https://music.youtube.com/playlist?list=LM" --cookies cookies.txt
+```
+
+### 3. YouTube Music のログイン連携 (非公開プレイリスト・高音質音源)
+YouTube Music Premium やお気に入り（Liked Music: `list=LM`）、非公開プレイリストを取り込むためのログイン認証に対応しています。
+
+#### 🌐 デスクトップエディターでのログイン設定:
+1. 「**▶ YouTube Music から追加**」モーダルを開き、「**🔐 ログイン設定**」をクリックします。
+2. **方法1（推奨・確実）**: ブラウザで YouTube Music にログインし、拡張機能（「*Get cookies.txt LOCALLY*」など）で取得した `cookies.txt` をドラッグ＆ドロップまたはテキスト貼り付けして「**💾 保存してログイン**」をクリック。
+3. **方法2**: 「ブラウザから自動取得」タブで対象ブラウザ（Chrome / Safari / Firefox など）を選択して連携テスト。
+4. 設定後は「**🟢 ログイン中 (YouTube Music)**」と表示され、次回以降も自動的に認証セッションが維持されます。
+
+#### 💻 CLI でのログイン設定・検証:
+```bash
+# 取得した cookies.txt を保存 (~/.config/pacemaker/youtube_cookies.txt)
+cargo run --bin pacemaker_uploader -- auth-yt --save cookies.txt
+
+# YouTube Music との認証接続テスト
+cargo run --bin pacemaker_uploader -- auth-yt --test
+
+# ブラウザからの認証取得テスト (Chrome)
+cargo run --bin pacemaker_uploader -- auth-yt --test --browser chrome
 ```
 *(※ ダウンロードには Homebrew でインストールした `yt-dlp` および `ffmpeg` を使用します)*

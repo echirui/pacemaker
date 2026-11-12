@@ -54,6 +54,32 @@ enum Commands {
         /// Custom Pacemaker volume path (optional, auto-detected if omitted)
         #[arg(short, long)]
         dest: Option<PathBuf>,
+
+        /// Path to custom Netscape cookies.txt file
+        #[arg(long)]
+        cookies: Option<PathBuf>,
+
+        /// Extract cookies from browser (e.g. chrome, safari, firefox, brave, edge)
+        #[arg(long)]
+        cookies_from_browser: Option<String>,
+    },
+    /// Check or configure YouTube Music authentication
+    AuthYt {
+        /// Import and save a cookies.txt file to ~/.config/pacemaker/youtube_cookies.txt
+        #[arg(short, long)]
+        save: Option<PathBuf>,
+
+        /// Test authentication with YouTube Music
+        #[arg(short, long)]
+        test: bool,
+
+        /// Browser to test or extract cookies from (e.g. chrome, safari, firefox)
+        #[arg(short, long)]
+        browser: Option<String>,
+
+        /// Path to custom cookies.txt to test
+        #[arg(long)]
+        cookies: Option<PathBuf>,
     },
 }
 
@@ -70,8 +96,11 @@ fn main() {
         Commands::Device => {
             cmd_device();
         }
-        Commands::ImportYt { query, case, dest } => {
-            cmd_import_yt(&query, case.as_deref(), dest.as_deref());
+        Commands::ImportYt { query, case, dest, cookies, cookies_from_browser } => {
+            cmd_import_yt(&query, case.as_deref(), dest.as_deref(), cookies.as_deref(), cookies_from_browser.as_deref());
+        }
+        Commands::AuthYt { save, test, browser, cookies } => {
+            cmd_auth_yt(save.as_deref(), test, browser.as_deref(), cookies.as_deref());
         }
     }
 }
@@ -241,7 +270,95 @@ fn cmd_upload(fw_path: &Path, custom_dest: Option<PathBuf>, force: bool) {
     println!("========================================================\n");
 }
 
-fn cmd_import_yt(query: &str, case: Option<&str>, custom_dest: Option<&Path>) {
+fn get_default_cookies_path() -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".config").join("pacemaker").join("youtube_cookies.txt")
+    } else {
+        std::env::temp_dir().join("pacemaker").join("youtube_cookies.txt")
+    }
+}
+
+fn cmd_auth_yt(save_file: Option<&Path>, test: bool, browser: Option<&str>, custom_cookies: Option<&Path>) {
+    println!("\n🔐 === Tonium Pacemaker YouTube Music Authentication ===");
+    let default_cookies = get_default_cookies_path();
+
+    if let Some(src) = save_file {
+        if !src.exists() {
+            eprintln!("❌ Specified cookie file not found: {}", src.display());
+            std::process::exit(1);
+        }
+        if let Some(parent) = default_cookies.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Err(e) = fs::copy(src, &default_cookies) {
+            eprintln!("❌ Failed to save cookies to {}: {}", default_cookies.display(), e);
+            std::process::exit(1);
+        }
+        println!("✓ Saved cookies to: {}", default_cookies.display());
+    }
+
+    if default_cookies.exists() {
+        let meta = fs::metadata(&default_cookies).ok();
+        let size = meta.map(|m| m.len()).unwrap_or(0);
+        let content = fs::read_to_string(&default_cookies).unwrap_or_default();
+        let has_tokens = content.contains("LOGIN_INFO") || content.contains("SAPISID") || content.contains("__Secure-") || content.contains("SID");
+        println!("Saved Cookie File: {}", default_cookies.display());
+        println!("File Size:         {} bytes", size);
+        println!("Login Session:     {}", if has_tokens { "✓ Valid session tokens detected" } else { "⚠️ No active login tokens detected" });
+    } else {
+        println!("Saved Cookie File: None (Guest mode)");
+    }
+
+    if test {
+        println!("\n🧪 Running YouTube Music authentication test...");
+        let ytdlp_candidates = ["/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp", "yt-dlp"];
+        let ytdlp_bin = ytdlp_candidates.iter().find(|p| Path::new(p).exists()).copied().unwrap_or("yt-dlp");
+
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        let enhanced_path = format!("/opt/homebrew/bin:/usr/local/bin:{}", current_path);
+
+        let mut cmd = std::process::Command::new(ytdlp_bin);
+        cmd.env("PATH", &enhanced_path);
+        cmd.args(&["--dump-single-json", "--simulate", "--no-playlist"]);
+
+        if let Some(b) = browser {
+            println!("Testing with browser: {}", b);
+            cmd.args(&["--cookies-from-browser", b]);
+        } else if let Some(c) = custom_cookies {
+            println!("Testing with cookies file: {}", c.display());
+            cmd.arg("--cookies").arg(c);
+        } else if default_cookies.exists() {
+            println!("Testing with saved cookies: {}", default_cookies.display());
+            cmd.arg("--cookies").arg(&default_cookies);
+        } else {
+            println!("Testing in guest mode (no cookies)...");
+        }
+
+        cmd.arg("https://music.youtube.com/watch?v=kJQP7kiw5Fk");
+
+        match cmd.output() {
+            Ok(out) if out.status.success() => {
+                println!("✅ YouTube Music authentication & connection successful!");
+            }
+            Ok(out) => {
+                let err = String::from_utf8_lossy(&out.stderr);
+                eprintln!("❌ Authentication test failed:");
+                if err.contains("Operation not permitted") {
+                    eprintln!("  macOS privacy protection blocked browser cookie access.");
+                    eprintln!("  Use 'pacemaker-uploader auth-yt --save <cookies.txt>' instead.");
+                } else {
+                    eprintln!("  {}", err.lines().last().unwrap_or(&err));
+                }
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to execute yt-dlp: {}", e);
+            }
+        }
+    }
+    println!("=======================================================\n");
+}
+
+fn cmd_import_yt(query: &str, case: Option<&str>, custom_dest: Option<&Path>, cookies: Option<&Path>, cookies_from_browser: Option<&str>) {
     println!("\n🎵 === Tonium Pacemaker YouTube Music Importer ===");
     println!("Query / Target: {}", query);
 
@@ -283,6 +400,21 @@ fn cmd_import_yt(query: &str, case: Option<&str>, custom_dest: Option<&Path>) {
         "--print-json",
         "-o", &format!("{}/%(id)s.%(ext)s", temp_dir.display()),
     ]);
+
+    if let Some(cookie_file) = cookies {
+        println!("🔐 Using specified cookies: {}", cookie_file.display());
+        cmd.arg("--cookies").arg(cookie_file);
+    } else if let Some(browser) = cookies_from_browser {
+        println!("🔐 Extracting cookies from browser: {}", browser);
+        cmd.args(&["--cookies-from-browser", browser]);
+    } else {
+        let default_cookies = get_default_cookies_path();
+        if default_cookies.exists() {
+            println!("🔐 Using saved YouTube Music session: {}", default_cookies.display());
+            cmd.arg("--cookies").arg(&default_cookies);
+        }
+    }
+
     if !is_playlist {
         cmd.arg("--no-playlist");
     }

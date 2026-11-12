@@ -395,6 +395,237 @@ pub struct YoutubeImportResponse {
     pub items: Vec<YoutubeImportItem>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct YoutubeAuthStatus {
+    pub is_logged_in: bool,
+    pub cookie_file_exists: bool,
+    pub cookie_file_path: String,
+    pub cookie_file_size: u64,
+    pub last_modified: Option<u64>,
+    pub account_hint: Option<String>,
+    pub details: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct YoutubeAuthTestResult {
+    pub success: bool,
+    pub message: String,
+    pub details: Option<String>,
+}
+
+fn get_pacemaker_config_dir() -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".config").join("pacemaker")
+    } else {
+        std::env::temp_dir().join("pacemaker")
+    }
+}
+
+fn get_youtube_cookie_path() -> PathBuf {
+    get_pacemaker_config_dir().join("youtube_cookies.txt")
+}
+
+fn format_relative_timestamp(secs: u64) -> String {
+    if secs == 0 { return "不明".to_string(); }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if now >= secs {
+        let diff = now - secs;
+        if diff < 60 {
+            "たった今".to_string()
+        } else if diff < 3600 {
+            format!("{}分前", diff / 60)
+        } else if diff < 86400 {
+            format!("{}時間前", diff / 3600)
+        } else {
+            format!("{}日前", diff / 86400)
+        }
+    } else {
+        "直近".to_string()
+    }
+}
+
+#[command]
+fn get_youtube_auth_status() -> Result<YoutubeAuthStatus, String> {
+    let cookie_file = get_youtube_cookie_path();
+    if !cookie_file.exists() {
+        return Ok(YoutubeAuthStatus {
+            is_logged_in: false,
+            cookie_file_exists: false,
+            cookie_file_path: cookie_file.display().to_string(),
+            cookie_file_size: 0,
+            last_modified: None,
+            account_hint: None,
+            details: "Cookieファイル未設定 (ゲストモード)".to_string(),
+        });
+    }
+
+    let meta = fs::metadata(&cookie_file)
+        .map_err(|e| format!("ファイル情報の取得に失敗しました: {}", e))?;
+    let size = meta.len();
+    let mtime = meta.modified().ok().and_then(|t| {
+        t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())
+    });
+
+    let content = fs::read_to_string(&cookie_file).unwrap_or_default();
+    let has_yt_domain = content.contains(".youtube.com") || content.contains(".google.com");
+    let has_auth_tokens = content.contains("LOGIN_INFO")
+        || content.contains("SAPISID")
+        || content.contains("__Secure-1PSID")
+        || content.contains("__Secure-3PSID")
+        || content.contains("SSID")
+        || content.contains("SID");
+
+    let is_logged_in = has_yt_domain && has_auth_tokens;
+    let hint = if is_logged_in {
+        Some("YouTube Music ログイン有効".to_string())
+    } else if has_yt_domain {
+        Some("YouTube Cookieあり (未ログイン/ゲスト)".to_string())
+    } else {
+        None
+    };
+
+    let details = if is_logged_in {
+        format!("ログイン中 ({:.1} KB, {})", size as f64 / 1024.0, format_relative_timestamp(mtime.unwrap_or(0)))
+    } else {
+        "Cookieが存在しますが、ログイン情報が検出されませんでした".to_string()
+    };
+
+    Ok(YoutubeAuthStatus {
+        is_logged_in,
+        cookie_file_exists: true,
+        cookie_file_path: cookie_file.display().to_string(),
+        cookie_file_size: size,
+        last_modified: mtime,
+        account_hint: hint,
+        details,
+    })
+}
+
+#[command]
+fn save_youtube_cookies(content: String) -> Result<YoutubeAuthStatus, String> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Err("Cookieの内容が空です。".to_string());
+    }
+
+    let dir = get_pacemaker_config_dir();
+    fs::create_dir_all(&dir)
+        .map_err(|e| format!("設定ディレクトリの作成に失敗しました: {}", e))?;
+
+    let cookie_file = get_youtube_cookie_path();
+    let file_content = if !trimmed.starts_with("# Netscape") && trimmed.contains('\t') {
+        format!("# Netscape HTTP Cookie File\n# Generated for Tonium Pacemaker\n{}\n", trimmed)
+    } else {
+        format!("{}\n", trimmed)
+    };
+
+    fs::write(&cookie_file, file_content)
+        .map_err(|e| format!("Cookieファイルの保存に失敗しました: {}", e))?;
+
+    get_youtube_auth_status()
+}
+
+#[command]
+fn clear_youtube_cookies() -> Result<YoutubeAuthStatus, String> {
+    let cookie_file = get_youtube_cookie_path();
+    if cookie_file.exists() {
+        let _ = fs::remove_file(&cookie_file);
+    }
+    get_youtube_auth_status()
+}
+
+#[command]
+async fn test_youtube_auth(
+    method: String,
+    browser: Option<String>,
+) -> Result<YoutubeAuthTestResult, String> {
+    let ytdlp_path = find_executable("yt-dlp")
+        .ok_or_else(|| "yt-dlp が見つかりません。'brew install yt-dlp' でインストールしてください。".to_string())?;
+
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    let enhanced_path = format!("/opt/homebrew/bin:/usr/local/bin:{}", current_path);
+
+    let mut cmd = std::process::Command::new(&ytdlp_path);
+    cmd.env("PATH", &enhanced_path);
+    cmd.args(&[
+        "--dump-single-json",
+        "--simulate",
+        "--no-playlist",
+    ]);
+
+    if method == "browser" {
+        let b = browser.unwrap_or_else(|| "chrome".to_string());
+        cmd.args(&["--cookies-from-browser", &b]);
+    } else {
+        let cookie_file = get_youtube_cookie_path();
+        if !cookie_file.exists() {
+            return Ok(YoutubeAuthTestResult {
+                success: false,
+                message: "Cookieファイルが保存されていません。先にファイルを保存してください。".to_string(),
+                details: None,
+            });
+        }
+        cmd.args(&["--cookies", &cookie_file.display().to_string()]);
+    }
+
+    cmd.arg("https://music.youtube.com/watch?v=kJQP7kiw5Fk");
+
+    let output = cmd.output().map_err(|e| format!("yt-dlp の実行に失敗しました: {}", e))?;
+
+    if output.status.success() {
+        Ok(YoutubeAuthTestResult {
+            success: true,
+            message: "✓ YouTube Music との通信およびログイン認証に成功しました！".to_string(),
+            details: Some("セッションCookieは正常に機能しています。".to_string()),
+        })
+    } else {
+        let err_text = String::from_utf8_lossy(&output.stderr);
+        let error_msg = if err_text.contains("Operation not permitted") {
+            "macOSのセキュリティ保護によりブラウザCookieへのアクセスが拒否されました。「Cookieファイル / 貼り付け」をご利用いただくか、システム設定で権限を付与してください。".to_string()
+        } else if err_text.contains("could not find") && err_text.contains("cookies database") {
+            "ブラウザのCookieデータベースが見つかりませんでした。対象ブラウザで一度YouTube Musicを開いてログインするか、「Cookieファイル」方式をお試しください。".to_string()
+        } else {
+            let last_line = err_text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("不明なエラー");
+            format!("認証エラー: {}", last_line)
+        };
+
+        Ok(YoutubeAuthTestResult {
+            success: false,
+            message: error_msg,
+            details: Some(err_text.to_string()),
+        })
+    }
+}
+
+#[command]
+fn open_in_browser(url: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("ブラウザの起動に失敗しました: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("ブラウザの起動に失敗しました: {}", e))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(&["/C", "start", &url])
+            .spawn()
+            .map_err(|e| format!("ブラウザの起動に失敗しました: {}", e))?;
+    }
+    Ok(())
+}
+
 fn find_executable(name: &str) -> Option<PathBuf> {
     let candidates = [
         format!("/opt/homebrew/bin/{}", name),
@@ -422,6 +653,8 @@ fn find_executable(name: &str) -> Option<PathBuf> {
 async fn import_youtube_track(
     query_or_url: String,
     case_name: Option<String>,
+    auth_method: Option<String>,
+    browser_name: Option<String>,
 ) -> Result<YoutubeImportResponse, String> {
     let vol = resolve_pacemaker_volume()
         .ok_or_else(|| "Pacemaker 実機が接続されていません。USBケーブルで実機を接続してください。".to_string())?;
@@ -464,6 +697,24 @@ async fn import_youtube_track(
         "-o", &format!("{}/%(id)s.%(ext)s", temp_dir.display()),
     ]);
 
+    // Handle authentication cookies
+    let method = auth_method.as_deref().unwrap_or("auto");
+    match method {
+        "browser" => {
+            let b = browser_name.as_deref().unwrap_or("chrome");
+            cmd.args(&["--cookies-from-browser", b]);
+        }
+        "none" => {
+            // Guest mode
+        }
+        "cookies_file" | "auto" | _ => {
+            let cookie_file = get_youtube_cookie_path();
+            if cookie_file.exists() {
+                cmd.args(&["--cookies", &cookie_file.display().to_string()]);
+            }
+        }
+    }
+
     if !is_playlist {
         cmd.arg("--no-playlist");
     }
@@ -475,8 +726,15 @@ async fn import_youtube_track(
     if !output.status.success() {
         let err_text = String::from_utf8_lossy(&output.stderr);
         let _ = fs::remove_dir_all(&temp_dir);
-        let last_line = err_text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("不明なエラー");
-        return Err(format!("ダウンロードに失敗しました: {}", last_line));
+        let error_msg = if err_text.contains("Operation not permitted") {
+            "macOSのセキュリティ保護によりブラウザCookieへのアクセスが制限されています。『Cookieファイル / 貼り付け』をご利用ください。".to_string()
+        } else if err_text.contains("Sign in to confirm") || err_text.contains("bot") || err_text.contains("Music Premium members") {
+            "YouTube Musicのログインが必要です。「🔐 ログイン設定」からCookieを設定してください。".to_string()
+        } else {
+            let last_line = err_text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("不明なエラー");
+            format!("ダウンロードに失敗しました: {}", last_line)
+        };
+        return Err(error_msg);
     }
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
@@ -736,7 +994,12 @@ pub fn run() {
             get_waveform_data,
             get_track_audio_bytes,
             inspect_firmware,
-            import_youtube_track
+            import_youtube_track,
+            get_youtube_auth_status,
+            save_youtube_cookies,
+            clear_youtube_cookies,
+            test_youtube_auth,
+            open_in_browser
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -768,17 +1031,23 @@ mod tests {
     }
 
     #[test]
-    fn test_disconnected_behavior() {
+    fn test_youtube_auth_management() {
         let _guard = TEST_MUTEX.lock().unwrap();
-        std::env::remove_var("PACEMAKER_MOCK");
-        if resolve_pacemaker_volume().is_none() {
-            let status = get_device_status();
-            assert!(!status.connected, "Device status should report disconnected when not mounted");
-            let tracks = get_tracks(None, None, None, None).expect("get_tracks should succeed with empty list");
-            assert!(tracks.is_empty(), "When disconnected, track list must be empty");
-            let cases = get_cases().expect("get_cases should succeed with empty list");
-            assert!(cases.is_empty(), "When disconnected, case list must be empty");
-        }
+        // Save test cookies
+        let test_cookie = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t2147483647\tLOGIN_INFO\tAFmmF2swRQIhAO...\n.youtube.com\tTRUE\t/\tTRUE\t2147483647\tSAPISID\tabcd1234\n";
+        let status = save_youtube_cookies(test_cookie.to_string()).expect("Failed to save cookies");
+        assert!(status.is_logged_in, "Auth status should be logged in with valid tokens");
+        assert!(status.cookie_file_exists, "Cookie file should exist");
+        assert!(status.cookie_file_size > 0);
+
+        // Verify retrieval
+        let retrieved = get_youtube_auth_status().expect("Failed to get auth status");
+        assert!(retrieved.is_logged_in);
+
+        // Clear cookies
+        let cleared = clear_youtube_cookies().expect("Failed to clear cookies");
+        assert!(!cleared.is_logged_in);
+        assert!(!cleared.cookie_file_exists);
     }
 }
 

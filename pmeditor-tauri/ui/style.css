@@ -838,3 +838,224 @@ body {
 .btn-danger:hover {
   background: #c53030;
 }
+
+/* YouTube Music Authentication Styling */
+.yt-auth-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: linear-gradient(135deg, rgba(22, 27, 34, 0.9), rgba(15, 18, 23, 0.95));
+  border: 1px solid #2a3342;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+
+.yt-auth-status-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.yt-auth-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 12px;
+  width: fit-content;
+}
+
+.yt-auth-badge.guest {
+  background: rgba(255, 171, 0, 0.12);
+  color: #ffab00;
+  border: 1px solid rgba(255, 171, 0, 0.35);
+}
+
+.yt-auth-badge.active {
+  background: rgba(0, 230, 118, 0.12);
+  color: #00e676;
+  border: 1px solid rgba(0, 230, 118, 0.35);
+}
+
+.yt-auth-detail {
+  font-size: 11px;
+  color: #8fa3bf;
+}
+
+.yt-auth-panel {
+  background: #0f131a;
+  border: 1px solid #2b3545;
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 14px;
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+.yt-auth-tabs {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid #222b38;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+.yt-auth-tab {
+  background: transparent;
+  border: none;
+  color: #718096;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.yt-auth-tab:hover {
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.yt-auth-tab.active {
+  color: #00e5ff;
+  background: rgba(0, 229, 255, 0.12);
+  font-weight: 600;
+}
+
+.yt-auth-subtext {
+  font-size: 12px;
+  color: #a0aec0;
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+.cookie-drop-area {
+  border: 1px dashed #3a4759;
+  border-radius: 6px;
+  padding: 14px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.015);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cookie-drop-area.dragover {
+  border-color: #00e5ff;
+  background: rgba(0, 229, 255, 0.05);
+}
+
+.cookie-drop-icon {
+  font-size: 24px;
+}
+
+.cookie-drop-label {
+  font-size: 12px;
+  color: #cbd5e0;
+}
+
+.cookie-textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  background: #090c10;
+  color: #00e5ff;
+  border: 1px solid #2a3442;
+  border-radius: 4px;
+  padding: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.cookie-textarea:focus {
+  border-color: #00e5ff;
+  outline: none;
+}
+
+.yt-auth-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.yt-browser-select {
+  flex: 1;
+  padding: 8px 10px;
+  background: #12161f;
+  border: 1px solid #2b3545;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 13px;
+}
+
+.yt-browser-warning {
+  font-size: 11px;
+  color: #a0aec0;
+  line-height: 1.5;
+  margin-top: 8px;
+}
+
+.yt-guide-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 12px;
+  border-radius: 6px;
+}
+
+.yt-guide-step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #cbd5e0;
+}
+
+.guide-num {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 20px;
+  height: 20px;
+  background: #00e5ff;
+  color: #0d1117;
+  font-weight: bold;
+  font-size: 11px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.yt-auth-feedback {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.yt-auth-feedback.success {
+  background: rgba(0, 230, 118, 0.12);
+  border: 1px solid rgba(0, 230, 118, 0.35);
+  color: #00e676;
+}
+
+.yt-auth-feedback.error {
+  background: rgba(244, 67, 54, 0.12);
+  border: 1px solid rgba(244, 67, 54, 0.35);
+  color: #ff5252;
+}
+
+.btn-xs {
+  font-size: 11px;
+  padding: 4px 10px;
+}

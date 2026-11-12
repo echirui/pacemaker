@@ -81,6 +81,212 @@ const ytStatusBox = document.getElementById('ytStatusBox');
 const ytStatusText = document.getElementById('ytStatusText');
 const btnYtSubmit = document.getElementById('btnYtSubmit');
 
+// YouTube Auth Elements
+const ytAuthBanner = document.getElementById('ytAuthBanner');
+const ytAuthBadge = document.getElementById('ytAuthBadge');
+const ytAuthDetail = document.getElementById('ytAuthDetail');
+const btnToggleAuthPanel = document.getElementById('btnToggleAuthPanel');
+const btnToggleAuthText = document.getElementById('btnToggleAuthText');
+const ytAuthPanel = document.getElementById('ytAuthPanel');
+const cookieDropArea = document.getElementById('cookieDropArea');
+const cookieDropLabel = document.getElementById('cookieDropLabel');
+const cookieFileInput = document.getElementById('cookieFileInput');
+const cookiePasteArea = document.getElementById('cookiePasteArea');
+const btnSaveCookies = document.getElementById('btnSaveCookies');
+const btnTestAuth = document.getElementById('btnTestAuth');
+const btnClearAuth = document.getElementById('btnClearAuth');
+const ytBrowserSelect = document.getElementById('ytBrowserSelect');
+const btnTestBrowser = document.getElementById('btnTestBrowser');
+const btnLinkYtMusic = document.getElementById('btnLinkYtMusic');
+const btnOpenBrowserYt = document.getElementById('btnOpenBrowserYt');
+const ytAuthMsg = document.getElementById('ytAuthMsg');
+let currentAuthStatus = null;
+
+async function loadYoutubeAuthStatus() {
+  try {
+    const status = await callCommand('get_youtube_auth_status');
+    currentAuthStatus = status;
+    if (status.is_logged_in) {
+      ytAuthBadge.className = 'yt-auth-badge active';
+      ytAuthBadge.textContent = '🟢 ログイン中 (YouTube Music)';
+      ytAuthDetail.textContent = status.details || 'ログインセッション有効 (非公開プレイリスト・高音質対応)';
+      if (btnClearAuth) btnClearAuth.classList.remove('hidden');
+    } else {
+      ytAuthBadge.className = 'yt-auth-badge guest';
+      ytAuthBadge.textContent = '⚪ 未ログイン (ゲストモード)';
+      ytAuthDetail.textContent = status.details || 'ログインすると非公開プレイリストや高音質ストリームを取得できます';
+      if (btnClearAuth) btnClearAuth.classList.add('hidden');
+    }
+  } catch (err) {
+    console.error('Failed to load YouTube auth status:', err);
+  }
+}
+
+function showAuthFeedback(msg, isSuccess = true) {
+  if (!ytAuthMsg) return;
+  ytAuthMsg.className = `yt-auth-feedback ${isSuccess ? 'success' : 'error'}`;
+  ytAuthMsg.textContent = msg;
+  ytAuthMsg.classList.remove('hidden');
+}
+
+function initYoutubeAuthHandlers() {
+  // Toggle Auth Panel
+  if (btnToggleAuthPanel) {
+    btnToggleAuthPanel.addEventListener('click', () => {
+      const isHidden = ytAuthPanel.classList.toggle('hidden');
+      btnToggleAuthText.textContent = isHidden ? '🔐 ログイン設定' : '▲ 設定を閉じる';
+    });
+  }
+
+  // Auth Tabs
+  const authTabs = document.querySelectorAll('.yt-auth-tab');
+  authTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      authTabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const targetId = tab.getAttribute('data-tab');
+      document.querySelectorAll('.yt-tab-pane').forEach(pane => {
+        pane.classList.toggle('hidden', pane.id !== targetId);
+      });
+      if (ytAuthMsg) ytAuthMsg.classList.add('hidden');
+    });
+  });
+
+  // Cookie File input
+  if (cookieFileInput) {
+    cookieFileInput.addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        cookiePasteArea.value = text;
+        if (cookieDropLabel) cookieDropLabel.textContent = `選択中: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+        await handleSaveCookieText(text);
+      } catch (err) {
+        showAuthFeedback(`ファイルの読み込みに失敗しました: ${err.message}`, false);
+      }
+    });
+  }
+
+  // Cookie Drop Area drag & drop
+  if (cookieDropArea) {
+    cookieDropArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cookieDropArea.classList.add('dragover');
+    });
+    cookieDropArea.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cookieDropArea.classList.remove('dragover');
+    });
+    cookieDropArea.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cookieDropArea.classList.remove('dragover');
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file) {
+        try {
+          const text = await file.text();
+          cookiePasteArea.value = text;
+          if (cookieDropLabel) cookieDropLabel.textContent = `読込: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+          await handleSaveCookieText(text);
+        } catch (err) {
+          showAuthFeedback(`ドラッグされたファイルの読込に失敗しました: ${err.message}`, false);
+        }
+      }
+    });
+  }
+
+  // Save Cookie Text
+  async function handleSaveCookieText(text) {
+    const val = (text || cookiePasteArea.value || '').trim();
+    if (!val) {
+      showAuthFeedback('Cookieの内容を入力または指定してください。', false);
+      return;
+    }
+    showAuthFeedback('Cookieを保存して検証中...', true);
+    try {
+      await callCommand('save_youtube_cookies', { content: val });
+      await loadYoutubeAuthStatus();
+      showAuthFeedback('✓ Cookieを保存しました！ログイン状態が有効化されました。', true);
+    } catch (err) {
+      showAuthFeedback(`保存失敗: ${err.message || String(err)}`, false);
+    }
+  }
+
+  if (btnSaveCookies) {
+    btnSaveCookies.addEventListener('click', () => handleSaveCookieText());
+  }
+
+  // Clear Cookies (Logout)
+  if (btnClearAuth) {
+    btnClearAuth.addEventListener('click', async () => {
+      try {
+        await callCommand('clear_youtube_cookies');
+        cookiePasteArea.value = '';
+        if (cookieDropLabel) cookieDropLabel.textContent = 'cookies.txt をここにドラッグ＆ドロップ';
+        await loadYoutubeAuthStatus();
+        showAuthFeedback('ログアウトしました (ゲストモードに戻りました)。', true);
+      } catch (err) {
+        showAuthFeedback(`ログアウト処理失敗: ${err.message || String(err)}`, false);
+      }
+    });
+  }
+
+  // Test Authentication (Cookie file)
+  if (btnTestAuth) {
+    btnTestAuth.addEventListener('click', async () => {
+      showAuthFeedback('⏳ YouTube Musicとの接続およびログイン検証中...', true);
+      try {
+        const res = await callCommand('test_youtube_auth', { method: 'cookies_file' });
+        if (res.success) {
+          showAuthFeedback(res.message, true);
+        } else {
+          showAuthFeedback(res.message, false);
+        }
+      } catch (err) {
+        showAuthFeedback(`検証エラー: ${err.message || String(err)}`, false);
+      }
+    });
+  }
+
+  // Test Browser Authentication
+  if (btnTestBrowser) {
+    btnTestBrowser.addEventListener('click', async () => {
+      const b = (ytBrowserSelect && ytBrowserSelect.value) || 'chrome';
+      showAuthFeedback(`⏳ ${b} からのセッション取得をテスト中...`, true);
+      try {
+        const res = await callCommand('test_youtube_auth', { method: 'browser', browser: b });
+        if (res.success) {
+          showAuthFeedback(res.message, true);
+        } else {
+          showAuthFeedback(res.message, false);
+        }
+      } catch (err) {
+        showAuthFeedback(`ブラウザ連携エラー: ${err.message || String(err)}`, false);
+      }
+    });
+  }
+
+  // Open YouTube Music in browser
+  const openYtMusicWeb = () => {
+    callCommand('open_in_browser', { url: 'https://music.youtube.com' }).catch(e => console.error(e));
+  };
+  if (btnLinkYtMusic) {
+    btnLinkYtMusic.addEventListener('click', (e) => {
+      e.preventDefault();
+      openYtMusicWeb();
+    });
+  }
+  if (btnOpenBrowserYt) {
+    btnOpenBrowserYt.addEventListener('click', (e) => {
+      e.preventDefault();
+      openYtMusicWeb();
+    });
+  }
+}
+
 function openYtModal() {
   if (!isDeviceConnected) {
     showConfirmDialog('実機未接続', 'Pacemaker 実機が接続されていません。USBケーブルで実機を接続してから楽曲を追加してください。', '🔌', '了解');
@@ -89,9 +295,11 @@ function openYtModal() {
   ytInputUrl.value = '';
   ytCaseName.value = '';
   ytStatusBox.classList.add('hidden');
+  if (ytAuthMsg) ytAuthMsg.classList.add('hidden');
   btnYtSubmit.disabled = false;
   btnYtSubmit.innerHTML = '<span>⬇️ ダウンロードして転送</span>';
   ytModal.classList.remove('hidden');
+  loadYoutubeAuthStatus();
   setTimeout(() => ytInputUrl.focus(), 60);
 }
 
@@ -1275,6 +1483,7 @@ function setupEvents() {
       if (e.target === ytModal && !btnYtSubmit.disabled) closeYtModal();
     });
   }
+  initYoutubeAuthHandlers();
 
   // Global Keydown Handler for Modals
   window.addEventListener('keydown', (e) => {
@@ -1295,6 +1504,9 @@ function setupEvents() {
 function initDragDrop() {
   window.addEventListener('dragover', (e) => {
     e.preventDefault();
+    if (ytModal && !ytModal.classList.contains('hidden')) {
+      return;
+    }
     dropOverlay.classList.remove('hidden');
   });
 
