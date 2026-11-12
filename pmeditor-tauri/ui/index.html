@@ -29,8 +29,8 @@
         </div>
       </div>
 
-      <div class="header-right">
-        <button id="btnOpenYtAuthModal" class="btn btn-secondary" title="YouTube Music のアカウントログイン・Cookie設定" style="display: inline-flex; align-items: center; gap: 6px;">
+      <div class="header-right" role="toolbar" aria-label="楽曲インポート・設定ツールバー">
+        <button id="btnOpenYtAuthModal" class="btn btn-secondary" title="YouTube Music のアカウントログイン・Cookie設定">
           <span id="headerAuthIcon">🔐</span>
           <span id="headerAuthText">YouTube ログイン設定</span>
           <span id="headerAuthBadge" class="nav-badge guest">未ログイン</span>
@@ -39,7 +39,7 @@
           <span class="yt-icon">▶</span>
           <span>YouTube Music から追加</span>
         </button>
-        <label class="btn btn-primary btn-import" for="fileInput">
+        <label class="btn btn-primary btn-import" for="fileInput" title="PCローカルの音楽ファイル（MP3/WAV/FLAC等）を追加">
           <span>＋ ローカル楽曲を追加</span>
         </label>
         <input type="file" id="fileInput" multiple accept="audio/*,.mp3,.m4a,.wav,.flac,.aiff" style="display:none;">
