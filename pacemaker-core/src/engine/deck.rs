@@ -82,6 +82,43 @@ impl Deck {
         self.play_speed = factor.clamp(0.5, 2.0);
     }
 
+    #[inline]
+    pub fn is_playing(&self) -> bool {
+        self.state == PlaybackState::Playing
+    }
+
+    #[inline]
+    pub fn is_paused(&self) -> bool {
+        self.state == PlaybackState::Paused
+    }
+
+    #[inline]
+    pub fn is_stopped(&self) -> bool {
+        self.state == PlaybackState::Stopped
+    }
+
+    pub fn remaining_time_ms(&self) -> TimeMs {
+        if let Some(ref track) = self.current_track {
+            let total_ms = (track.play_time_secs as TimeMs) * 1000;
+            (total_ms - self.current_time_ms).max(0)
+        } else {
+            0
+        }
+    }
+
+    pub fn progress_ratio(&self) -> f32 {
+        if let Some(ref track) = self.current_track {
+            let total_ms = (track.play_time_secs as f32) * 1000.0;
+            if total_ms > 0.0 {
+                (self.current_time_ms as f32 / total_ms).clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        }
+    }
+
     /// Advances the playhead by `delta_samples` at the given sample rate
     pub fn advance_samples(&mut self, samples: usize, sample_rate: f32) {
         if self.state != PlaybackState::Playing {

@@ -40,6 +40,39 @@ impl PacemakerMixer {
         }
     }
 
+    #[inline]
+    pub fn active_deck_id(&self) -> DeckId {
+        if self.crossfader.position <= 0.0 {
+            DeckId::DeckA
+        } else {
+            DeckId::DeckB
+        }
+    }
+
+    #[inline]
+    pub fn active_deck(&self) -> &Deck {
+        self.deck(self.active_deck_id())
+    }
+
+    #[inline]
+    pub fn active_deck_mut(&mut self) -> &mut Deck {
+        let id = self.active_deck_id();
+        self.deck_mut(id)
+    }
+
+    /// Steps crossfader toward a target position [-1.0, 1.0] by `step`
+    /// Returns true if target position was reached
+    pub fn step_crossfader_toward(&mut self, target: f32, step: f32) -> bool {
+        let diff = target - self.crossfader.position;
+        if diff.abs() <= step {
+            self.crossfader.position = target;
+            true
+        } else {
+            self.crossfader.position += diff.signum() * step;
+            false
+        }
+    }
+
     pub fn set_crossfader(&mut self, norm_position: f32) {
         // Map [0.0, 1.0] to [-1.0, +1.0] for internal CompoundCrossfader
         self.crossfader.position = (norm_position.clamp(0.0, 1.0) * 2.0) - 1.0;

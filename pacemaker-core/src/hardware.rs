@@ -225,8 +225,13 @@ impl HardwareController {
         Self::default()
     }
 
-    /// Handles button down event with modifiers and state-machine transitions
-    pub fn handle_button_down(&mut self, button: PhysicalButton, mixer: &mut PacemakerMixer) {
+    /// Handles button down event with optional playlist context (e.g. ALT+Search to skip tracks)
+    pub fn handle_button_down_with_playlist(
+        &mut self,
+        button: PhysicalButton,
+        mixer: &mut PacemakerMixer,
+        playlist: Option<&mut crate::playlist::Playlist>,
+    ) {
         self.button_pressed.insert(button, true);
 
         match button {
@@ -275,16 +280,32 @@ impl HardwareController {
                 deck.audio_loop.set_loop_out(deck.current_time_ms);
             }
             PhysicalButton::SearchFw => {
+                if self.alt_active {
+                    if let Some(pl) = playlist {
+                        if let Some(track) = pl.next_track() {
+                            mixer.deck_mut(self.active_deck).load_track(track.clone());
+                            return;
+                        }
+                    }
+                }
                 let deck = mixer.deck_mut(self.active_deck);
                 deck.current_time_ms += if self.alt_active { 10_000 } else { 2_000 };
             }
             PhysicalButton::SearchBw => {
+                if self.alt_active {
+                    if let Some(pl) = playlist {
+                        if let Some(track) = pl.previous_track() {
+                            mixer.deck_mut(self.active_deck).load_track(track.clone());
+                            return;
+                        }
+                    }
+                }
                 let deck = mixer.deck_mut(self.active_deck);
                 deck.current_time_ms = deck.current_time_ms.saturating_sub(if self.alt_active { 10_000 } else { 2_000 });
             }
             PhysicalButton::Sync => {
                 // Auto beat-match: synchronize BPM of active deck to opposite deck
-                let other_deck_id = if self.active_deck == DeckId::DeckA { DeckId::DeckB } else { DeckId::DeckA };
+                let other_deck_id = self.active_deck.opposite();
                 let other_bpm = mixer.deck(other_deck_id).current_track.as_ref().map(|t| t.bpm).unwrap_or(120.0);
                 if let Some(ref mut track) = mixer.deck_mut(self.active_deck).current_track {
                     track.bpm = other_bpm;
@@ -297,6 +318,11 @@ impl HardwareController {
                 // Power key event handled by PMIC
             }
         }
+    }
+
+    /// Handles button down event with modifiers and state-machine transitions
+    pub fn handle_button_down(&mut self, button: PhysicalButton, mixer: &mut PacemakerMixer) {
+        self.handle_button_down_with_playlist(button, mixer, None);
     }
 
     /// Handles button release event

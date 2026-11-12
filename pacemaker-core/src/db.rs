@@ -1,7 +1,36 @@
 //! SQLite reader and writer for Tonium Pacemaker `music.db`.
 
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, OptionalExtension, Result};
 use crate::types::{CaseItem, TrackId, TrackMetadata, TimeMs};
+use crate::playlist::Playlist;
+
+const TRACK_SELECT_COLS: &str = "track_id, title, artist, album, genre, year, \
+    bpm, play_time_secs, cue_point, loop_in, loop_out, \
+    location, key, rating, comments";
+
+const TRACK_JOIN_COLS: &str = "t.track_id, t.title, t.artist, t.album, t.genre, t.year, \
+    t.bpm, t.play_time_secs, t.cue_point, t.loop_in, t.loop_out, \
+    t.location, t.key, t.rating, t.comments";
+
+fn map_track_row(row: &rusqlite::Row) -> rusqlite::Result<TrackMetadata> {
+    Ok(TrackMetadata {
+        id: row.get(0)?,
+        title: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+        artist: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+        album: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+        genre: row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "Music".into()),
+        year: row.get::<_, Option<u32>>(5)?.unwrap_or(0),
+        bpm: row.get::<_, Option<f64>>(6)?.unwrap_or(120.0),
+        play_time_secs: row.get::<_, Option<u32>>(7)?.unwrap_or(0),
+        cue_point_ms: row.get::<_, Option<i64>>(8)?.unwrap_or(-1),
+        loop_in_ms: row.get::<_, Option<i64>>(9)?.unwrap_or(-1),
+        loop_out_ms: row.get::<_, Option<i64>>(10)?.unwrap_or(-1),
+        virtual_location: row.get::<_, Option<String>>(11)?.unwrap_or_default(),
+        key: row.get::<_, Option<String>>(12)?.unwrap_or_default(),
+        rating: row.get::<_, Option<u8>>(13)?.unwrap_or(0),
+        comments: row.get::<_, Option<String>>(14)?.unwrap_or_default(),
+    })
+}
 
 pub struct PacemakerDb {
     conn: Connection,
@@ -49,22 +78,18 @@ impl PacemakerDb {
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(cid) = case_id {
-            sql.push_str(
-                "SELECT t.track_id, t.title, t.artist, t.album, t.genre, t.year, \
-                 t.bpm, t.play_time_secs, t.cue_point, t.loop_in, t.loop_out, \
-                 t.location, t.key, t.rating, t.comments \
-                 FROM tracks t \
+            sql.push_str(&format!(
+                "SELECT {} FROM tracks t \
                  JOIN casetracks ct ON t.track_id = ct.track_id \
-                 WHERE ct.case_id = ?"
-            );
+                 WHERE ct.case_id = ?",
+                TRACK_JOIN_COLS
+            ));
             params.push(Box::new(cid));
         } else {
-            sql.push_str(
-                "SELECT track_id, title, artist, album, genre, year, \
-                 bpm, play_time_secs, cue_point, loop_in, loop_out, \
-                 location, key, rating, comments \
-                 FROM tracks WHERE 1=1"
-            );
+            sql.push_str(&format!(
+                "SELECT {} FROM tracks WHERE 1=1",
+                TRACK_SELECT_COLS
+            ));
         }
 
         if let Some(term) = search {
@@ -93,25 +118,7 @@ impl PacemakerDb {
 
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(param_refs.as_slice(), |row| {
-            Ok(TrackMetadata {
-                id: row.get(0)?,
-                title: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                artist: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                album: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                genre: row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "Music".into()),
-                year: row.get::<_, Option<u32>>(5)?.unwrap_or(0),
-                bpm: row.get::<_, Option<f64>>(6)?.unwrap_or(120.0),
-                play_time_secs: row.get::<_, Option<u32>>(7)?.unwrap_or(0),
-                cue_point_ms: row.get::<_, Option<i64>>(8)?.unwrap_or(-1),
-                loop_in_ms: row.get::<_, Option<i64>>(9)?.unwrap_or(-1),
-                loop_out_ms: row.get::<_, Option<i64>>(10)?.unwrap_or(-1),
-                virtual_location: row.get::<_, Option<String>>(11)?.unwrap_or_default(),
-                key: row.get::<_, Option<String>>(12)?.unwrap_or_default(),
-                rating: row.get::<_, Option<u8>>(13)?.unwrap_or(0),
-                comments: row.get::<_, Option<String>>(14)?.unwrap_or_default(),
-            })
-        })?;
+        let rows = stmt.query_map(param_refs.as_slice(), map_track_row)?;
 
         let mut tracks = Vec::new();
         for r in rows {
@@ -121,36 +128,8 @@ impl PacemakerDb {
     }
 
     pub fn get_track(&self, track_id: TrackId) -> Result<Option<TrackMetadata>> {
-        let sql = "SELECT track_id, title, artist, album, genre, year, \
-                   bpm, play_time_secs, cue_point, loop_in, loop_out, \
-                   location, key, rating, comments \
-                   FROM tracks WHERE track_id = ?1";
-
-        let mut stmt = self.conn.prepare(sql)?;
-        let mut rows = stmt.query_map(params![track_id], |row| {
-            Ok(TrackMetadata {
-                id: row.get(0)?,
-                title: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                artist: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                album: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                genre: row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "Music".into()),
-                year: row.get::<_, Option<u32>>(5)?.unwrap_or(0),
-                bpm: row.get::<_, Option<f64>>(6)?.unwrap_or(120.0),
-                play_time_secs: row.get::<_, Option<u32>>(7)?.unwrap_or(0),
-                cue_point_ms: row.get::<_, Option<i64>>(8)?.unwrap_or(-1),
-                loop_in_ms: row.get::<_, Option<i64>>(9)?.unwrap_or(-1),
-                loop_out_ms: row.get::<_, Option<i64>>(10)?.unwrap_or(-1),
-                virtual_location: row.get::<_, Option<String>>(11)?.unwrap_or_default(),
-                key: row.get::<_, Option<String>>(12)?.unwrap_or_default(),
-                rating: row.get::<_, Option<u8>>(13)?.unwrap_or(0),
-                comments: row.get::<_, Option<String>>(14)?.unwrap_or_default(),
-            })
-        })?;
-
-        match rows.next() {
-            Some(res) => Ok(Some(res?)),
-            None => Ok(None),
-        }
+        let sql = format!("SELECT {} FROM tracks WHERE track_id = ?1", TRACK_SELECT_COLS);
+        self.conn.query_row(&sql, params![track_id], map_track_row).optional()
     }
 
     pub fn set_cue_point(&self, track_id: TrackId, cue_point_ms: TimeMs) -> Result<()> {
@@ -227,59 +206,63 @@ impl PacemakerDb {
         comments: Option<&str>,
     ) -> Result<()> {
         let now = chrono_now_ms();
+        let tx = self.conn.unchecked_transaction()?;
+
         if let Some(t) = title {
             let ind = t.chars().take(32).collect::<String>().to_lowercase();
-            self.conn.execute(
+            tx.execute(
                 "UPDATE tracks SET title = ?1, ind_title = ?2, date_modified = ?3 WHERE track_id = ?4",
                 params![t, ind, now, track_id],
             )?;
         }
         if let Some(a) = artist {
             let ind = a.chars().take(32).collect::<String>().to_lowercase();
-            self.conn.execute(
+            tx.execute(
                 "UPDATE tracks SET artist = ?1, ind_artist = ?2, date_modified = ?3 WHERE track_id = ?4",
                 params![a, ind, now, track_id],
             )?;
         }
         if let Some(al) = album {
             let ind = al.chars().take(32).collect::<String>().to_lowercase();
-            self.conn.execute(
+            tx.execute(
                 "UPDATE tracks SET album = ?1, ind_album = ?2, date_modified = ?3 WHERE track_id = ?4",
                 params![al, ind, now, track_id],
             )?;
         }
         if let Some(g) = genre {
             let ind = g.chars().take(32).collect::<String>().to_lowercase();
-            self.conn.execute(
+            tx.execute(
                 "UPDATE tracks SET genre = ?1, ind_genre = ?2, date_modified = ?3 WHERE track_id = ?4",
                 params![g, ind, now, track_id],
             )?;
         }
         if let Some(y) = year {
-            self.conn.execute(
+            tx.execute(
                 "UPDATE tracks SET year = ?1, date_modified = ?2 WHERE track_id = ?3",
                 params![y, now, track_id],
             )?;
         }
         if let Some(b) = bpm {
             let ind_b = ((b / 10.0).floor() as i64) * 10;
-            self.conn.execute(
+            tx.execute(
                 "UPDATE tracks SET bpm = ?1, ind_bpm = ?2, date_modified = ?3 WHERE track_id = ?4",
                 params![b, ind_b, now, track_id],
             )?;
         }
         if let Some(k) = key {
-            self.conn.execute(
+            tx.execute(
                 "UPDATE tracks SET key = ?1, date_modified = ?2 WHERE track_id = ?3",
                 params![k, now, track_id],
             )?;
         }
         if let Some(c) = comments {
-            self.conn.execute(
+            tx.execute(
                 "UPDATE tracks SET comments = ?1, date_modified = ?2 WHERE track_id = ?3",
                 params![c, now, track_id],
             )?;
         }
+
+        tx.commit()?;
         Ok(())
     }
 
@@ -357,6 +340,82 @@ impl PacemakerDb {
             params![case_id, track_id],
         )?;
         Ok(())
+    }
+
+    /// Loads a `Playlist` from an existing Pacemaker Case
+    pub fn get_playlist(&self, case_id: i64) -> Result<Option<Playlist>> {
+        let name_res: Option<String> = self.conn.query_row(
+            "SELECT name FROM cases WHERE case_id = ?1",
+            params![case_id],
+            |row| row.get(0),
+        ).optional()?;
+
+        let Some(name) = name_res else {
+            return Ok(None);
+        };
+
+        let sql = format!(
+            "SELECT {} FROM tracks t \
+             JOIN casetracks ct ON t.track_id = ct.track_id \
+             WHERE ct.case_id = ?1 \
+             ORDER BY ct.rowid ASC",
+            TRACK_JOIN_COLS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![case_id], map_track_row)?;
+        let mut tracks = Vec::new();
+        for r in rows {
+            tracks.push(r?);
+        }
+
+        let mut playlist = Playlist::with_tracks(name, tracks);
+        playlist.id = Some(case_id);
+        Ok(Some(playlist))
+    }
+
+    /// Atomically persists or updates a `Playlist` to `cases` and `casetracks`
+    pub fn save_playlist(&self, playlist: &Playlist) -> Result<i64> {
+        let tx = self.conn.unchecked_transaction()?;
+        let now = chrono_now_ms();
+
+        let case_id = if let Some(id) = playlist.id {
+            let exists: bool = tx.query_row(
+                "SELECT 1 FROM cases WHERE case_id = ?1",
+                params![id],
+                |_| Ok(true),
+            ).unwrap_or(false);
+
+            if exists {
+                tx.execute(
+                    "UPDATE cases SET name = ?1, date_modified = ?2 WHERE case_id = ?3",
+                    params![playlist.name, now, id],
+                )?;
+                tx.execute("DELETE FROM casetracks WHERE case_id = ?1", params![id])?;
+                id
+            } else {
+                tx.execute(
+                    "INSERT INTO cases (name, date_created, times_played, rating, date_modified) VALUES (?1, ?2, 0, 0, ?2)",
+                    params![playlist.name, now],
+                )?;
+                tx.last_insert_rowid()
+            }
+        } else {
+            tx.execute(
+                "INSERT INTO cases (name, date_created, times_played, rating, date_modified) VALUES (?1, ?2, 0, 0, ?2)",
+                params![playlist.name, now],
+            )?;
+            tx.last_insert_rowid()
+        };
+
+        {
+            let mut insert_stmt = tx.prepare("INSERT INTO casetracks (case_id, track_id) VALUES (?1, ?2)")?;
+            for track in playlist.tracks() {
+                insert_stmt.execute(params![case_id, track.id])?;
+            }
+        }
+
+        tx.commit()?;
+        Ok(case_id)
     }
 
     /// Inserts a newly imported track record into Tonium Pacemaker `tracks` table
@@ -505,5 +564,100 @@ mod tests {
         assert_eq!(tracks[0].title, "Test YouTube Track");
         assert_eq!(tracks[0].artist, "Test Artist");
         assert_eq!(tracks[0].bpm, 128.0);
+    }
+
+    #[test]
+    fn test_playlist_save_and_load() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("
+            CREATE TABLE tracks (
+                track_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                artist VARCHAR(255), album_artist VARCHAR(255), title VARCHAR(255), composer VARCHAR(255),
+                album VARCHAR(255), track_number NUMBER(4), year NUMBER(4), genre VARCHAR(255),
+                is_part_of_c NUMBER(1), location VARCHAR(255), format VARCHAR(32), bit_rate NUMBER(10),
+                sample_rate NUMBER(10), file_size NUMBER(10), play_time_secs NUMBER(10), rating NUMBER(1),
+                comments VARCHAR(255), date_added NUMBER(20), last_played NUMBER(20), times_played NUMBER(10),
+                cue_point NUMBER(20), rc_mixes NUMBER(10), bpm REAL, label VARCHAR(255),
+                track_flags NUMBER(10) DEFAULT 0, global_id VARCHAR(255), loop_in NUMBER(20), loop_out NUMBER(20),
+                structured_ct VARCHAR(511), ind_title VARCHAR(32), ind_artist VARCHAR(32), ind_album VARCHAR(32),
+                ind_genre VARCHAR(32), ind_bpm INTEGER, discid VARCHAR(255), producer VARCHAR(255),
+                remixer VARCHAR(255), key VARCHAR(4), number_of_tracks NUMBER(4), disc_number NUMBER(4),
+                number_of_discs NUMBER(4), date_modified NUMBER(20), modified_by_ed VARCHAR(32),
+                analyzed_by_ed VARCHAR(32), analysis_ver INTEGER
+            );
+            CREATE TABLE cases (
+                case_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name VARCHAR(255), date_created NUMBER(20), times_played NUMBER(10),
+                rating NUMBER(1), date_modified NUMBER(20)
+            );
+            CREATE TABLE casetracks (
+                case_id INTEGER, track_id INTEGER
+            );
+        ").unwrap();
+
+        let db = PacemakerDb { conn };
+        let track1 = NewTrackInput {
+            title: "Track 1".into(),
+            artist: "Artist A".into(),
+            album: None,
+            genre: None,
+            year: None,
+            play_time_secs: 120,
+            file_size: 1000,
+            bit_rate: 320,
+            sample_rate: 44100,
+            format: "MP3".into(),
+            location: "/loc1.mp3".into(),
+            bpm: Some(120.0),
+            key: None,
+            comments: None,
+        };
+        let track2 = NewTrackInput {
+            title: "Track 2".into(),
+            artist: "Artist B".into(),
+            album: None,
+            genre: None,
+            year: None,
+            play_time_secs: 150,
+            file_size: 1200,
+            bit_rate: 320,
+            sample_rate: 44100,
+            format: "MP3".into(),
+            location: "/loc2.mp3".into(),
+            bpm: Some(124.0),
+            key: None,
+            comments: None,
+        };
+
+        let id1 = db.insert_track(&track1).unwrap();
+        let id2 = db.insert_track(&track2).unwrap();
+
+        let t1 = db.get_track(id1).unwrap().unwrap();
+        let t2 = db.get_track(id2).unwrap().unwrap();
+
+        let mut pl = Playlist::new("Festival Set");
+        pl.add_track(t1);
+        pl.add_track(t2);
+
+        let case_id = db.save_playlist(&pl).expect("Save playlist should succeed");
+        assert!(case_id > 0);
+
+        let loaded = db.get_playlist(case_id).unwrap().expect("Playlist should exist");
+        assert_eq!(loaded.name, "Festival Set");
+        assert_eq!(loaded.track_count(), 2);
+        assert_eq!(loaded.tracks()[0].title, "Track 1");
+        assert_eq!(loaded.tracks()[1].title, "Track 2");
+
+        // Now update playlist
+        let mut pl_updated = loaded;
+        pl_updated.name = "Festival Set Remastered".to_string();
+        pl_updated.remove_track_at(0);
+        let updated_id = db.save_playlist(&pl_updated).expect("Update should succeed");
+        assert_eq!(updated_id, case_id);
+
+        let reloaded = db.get_playlist(case_id).unwrap().unwrap();
+        assert_eq!(reloaded.name, "Festival Set Remastered");
+        assert_eq!(reloaded.track_count(), 1);
+        assert_eq!(reloaded.tracks()[0].title, "Track 2");
     }
 }
