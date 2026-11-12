@@ -8,6 +8,8 @@ let sortOrder = 'ASC';
 
 // Audio Player & Markers State
 const audio = document.getElementById('audioElement');
+let currentTrackLoadId = 0;
+let currentBlobUrl = null;
 let cuePointMs = -1;
 let loopInMs = -1;
 let loopOutMs = -1;
@@ -964,16 +966,7 @@ function renderTrackTable(tracks) {
       if (e.target.closest('.btn-edit-track') || e.target.closest('.btn-del-track')) {
         return;
       }
-      if (activeTrack && ((activeTrack.id ?? activeTrack.track_id) === trackId)) {
-        if (audio.paused) {
-          audio.play().catch(console.warn);
-        } else {
-          audio.currentTime = 0;
-          audio.play().catch(console.warn);
-        }
-      } else {
-        selectTrack(t, true);
-      }
+      selectTrack(t, true);
     });
 
     fragment.appendChild(tr);
@@ -1109,7 +1102,6 @@ async function saveTrackEdit(e) {
   }
 }
 
-let currentBlobUrl = null;
 let currentWaveformPeaks = null;
 let audioCtx = null;
 
@@ -1260,8 +1252,23 @@ function generateLightweightBars(track, waveformData) {
 
 async function selectTrack(track, autoplay = false) {
   if (!isDeviceConnected || !track) return;
-  activeTrack = track;
   const trackId = track.id !== undefined ? track.id : track.track_id;
+
+  // If already active track and audio has loaded, handle immediate toggle or replay
+  if (activeTrack && ((activeTrack.id ?? activeTrack.track_id) === trackId) && audio.src) {
+    if (autoplay) {
+      try {
+        audio.currentTime = 0;
+        await audio.play();
+      } catch (err) {
+        console.warn('Replay failed:', err);
+      }
+    }
+    return;
+  }
+
+  activeTrack = track;
+  const loadId = ++currentTrackLoadId;
 
   // Toggle active class directly without recreating entire table DOM
   document.querySelectorAll('.track-table tbody tr').forEach(r => {
@@ -1271,13 +1278,13 @@ async function selectTrack(track, autoplay = false) {
   // Stop previous track and reset playback controls immediately
   audio.pause();
   audio.currentTime = 0;
-  btnPlay.textContent = autoplay ? '⏸ 一時停止' : '▶ 再生';
   btnPlay.disabled = true;
+  btnPlay.textContent = '▶ 再生';
   playhead.style.left = '0%';
   deckTime.textContent = '0:00 / 0:00';
 
   deckTitle.textContent = track.title || 'Unknown Title';
-  deckArtist.textContent = autoplay ? '再生開始中...' : '音声 & 波形データを読み込み中...';
+  deckArtist.textContent = autoplay ? '再生準備中...' : '音声 & 波形データを読み込み中...';
   if (btnEditCurrentTrack) btnEditCurrentTrack.classList.remove('hidden');
   deckBpm.textContent = `BPM: ${track.bpm ? Number(track.bpm).toFixed(1) : '--'}`;
   deckKey.textContent = `KEY: ${track.key || '--'}`;
@@ -1287,18 +1294,23 @@ async function selectTrack(track, autoplay = false) {
   loopOutMs = track.loop_out_ms ?? track.loop_out ?? -1;
   loopEnabled = false;
 
-  currentWaveformPeaks = null;
-  drawWaveform();
+  btnJumpCue.disabled = false;
+  btnSetCue.disabled = false;
+  btnSetLoopIn.disabled = false;
+  btnSetLoopOut.disabled = false;
+  btnToggleLoop.disabled = false;
+  btnSaveMarkers.disabled = false;
+  updateMarkersUI();
 
-  // Try fetching proprietary .str waveform data
+  // Try fetching proprietary .str waveform data in background
   waveformData = null;
   try {
     waveformData = await callCommand('get_waveform_data', { trackId: Number(trackId) });
-  } catch (_) {
-    // No .str file
-  }
+  } catch (_) {}
 
-  // Free previous audio blob memory immediately
+  if (loadId !== currentTrackLoadId) return;
+
+  // Free previous audio blob memory
   if (currentBlobUrl) {
     URL.revokeObjectURL(currentBlobUrl);
     currentBlobUrl = null;
@@ -1306,9 +1318,9 @@ async function selectTrack(track, autoplay = false) {
 
   try {
     const rawBytes = await callCommand('get_track_audio_bytes', { trackId: Number(trackId) });
-    const uint8 = rawBytes instanceof Uint8Array ? rawBytes : new Uint8Array(rawBytes);
-    const arrayBuffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength);
+    if (loadId !== currentTrackLoadId) return;
 
+    const uint8 = rawBytes instanceof Uint8Array ? rawBytes : new Uint8Array(rawBytes);
     const loc = track.virtual_location || '';
     const ext = loc.split('.').pop().toLowerCase();
     let mime = 'audio/mpeg';
@@ -1324,65 +1336,57 @@ async function selectTrack(track, autoplay = false) {
     btnPlay.disabled = false;
     deckArtist.textContent = track.artist || 'Unknown Artist';
 
-    // Start playback immediately without waiting for waveform extraction
     if (autoplay) {
-      audio.play().then(() => {
-        btnPlay.textContent = '⏸ 一時停止';
-      }).catch(playErr => {
-        console.warn('Autoplay error:', playErr);
+      audio.play().catch(playErr => {
+        console.warn('Blob playback start error:', playErr);
       });
     }
 
-    // Decode real audio samples to produce high-definition 700-bar waveform in the background
-    currentWaveformPeaks = await extractWaveformPeaks(arrayBuffer);
-    drawWaveform();
+    // Decode audio for waveform in background without blocking playback
+    const arrayBuffer = uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength);
+    extractWaveformPeaks(arrayBuffer).then(peaks => {
+      if (loadId === currentTrackLoadId) {
+        currentWaveformPeaks = peaks || generateLightweightBars(track, waveformData);
+        drawWaveform();
+      }
+    }).catch(() => {
+      if (loadId === currentTrackLoadId) {
+        currentWaveformPeaks = generateLightweightBars(track, waveformData);
+        drawWaveform();
+      }
+    });
   } catch (err) {
-    console.error('Audio load error:', err);
-    // Fallback: Stream via pmaudio custom scheme
+    console.warn('Blob load failed, falling back to streaming protocol:', err);
+    if (loadId !== currentTrackLoadId) return;
+
     audio.src = `pmaudio://localhost/tracks/${trackId}`;
     audio.load();
     deckArtist.textContent = track.artist || 'Unknown Artist';
     btnPlay.disabled = false;
+
     if (autoplay) {
-      audio.play().then(() => {
-        btnPlay.textContent = '⏸ 一時停止';
-      }).catch(playErr => {
-        console.warn('Autoplay fallback error:', playErr);
+      audio.play().catch(playErr => {
+        console.warn('Fallback stream play error:', playErr);
       });
     }
-    currentWaveformPeaks = generateFallbackBars(700);
+
+    currentWaveformPeaks = generateLightweightBars(track, waveformData);
     drawWaveform();
   }
-
-  btnJumpCue.disabled = false;
-  btnSetCue.disabled = false;
-  btnSetLoopIn.disabled = false;
-  btnSetLoopOut.disabled = false;
-  btnToggleLoop.disabled = false;
-  btnSaveMarkers.disabled = false;
-
-  updateMarkersUI();
 }
 
 function initAudio() {
-  audio.addEventListener('error', async () => {
-    // Fallback: If custom scheme stream is blocked, stream via small byte loader
-    if (activeTrack && audio.src.startsWith('pmaudio://')) {
-      try {
-        const tid = activeTrack.id ?? activeTrack.track_id;
-        const rawBytes = await callCommand('get_track_audio_bytes', { trackId: Number(tid) });
-        const uint8 = rawBytes instanceof Uint8Array ? rawBytes : new Uint8Array(rawBytes);
-        const blob = new Blob([uint8], { type: 'audio/mpeg' });
-        currentBlobUrl = URL.createObjectURL(blob);
-        audio.src = currentBlobUrl;
-        audio.load();
-        btnPlay.disabled = false;
-      } catch (err) {
-        console.error('Audio load error:', err);
-        const code = audio.error ? audio.error.code : 0;
-        deckArtist.textContent = `${activeTrack.artist} (⚠️ 再生エラー: ${err.message || code})`;
-      }
+  audio.volume = volumeSlider ? parseFloat(volumeSlider.value) : 0.9;
+  audio.muted = false;
+
+  audio.addEventListener('error', () => {
+    console.error('Audio element error:', audio.error);
+    const code = audio.error ? audio.error.code : 0;
+    const msg = audio.error ? audio.error.message : '';
+    if (activeTrack) {
+      deckArtist.textContent = `${activeTrack.artist || ''} (⚠️ 再生エラー code ${code})`;
     }
+    btnPlay.textContent = '▶ 再生';
   });
 
   audio.addEventListener('timeupdate', () => {

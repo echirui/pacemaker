@@ -1150,7 +1150,7 @@ fn serve_audio_request(req: tauri::http::Request<Vec<u8>>) -> tauri::http::Respo
         _ => "audio/mpeg",
     };
 
-    // Handle HTTP Range
+    // Handle HTTP Range requests for seamless HTML5 <audio> streaming & seeking
     if let Some(range_val) = req.headers().get("range").and_then(|h| h.to_str().ok()) {
         if let Some(spec) = range_val.strip_prefix("bytes=") {
             let parts: Vec<&str> = spec.split('-').collect();
@@ -1161,39 +1161,42 @@ fn serve_audio_request(req: tauri::http::Request<Vec<u8>>) -> tauri::http::Respo
                 file_size.saturating_sub(1)
             }.min(file_size.saturating_sub(1));
 
-            // Limit single range response to 64KB for strict low-memory footprint
-            let max_range = 65536u64;
-            let end = end.min(start + max_range - 1);
-
-            let len = if end >= start { (end - start) + 1 } else { 0 };
-            let mut buf = vec![0u8; len as usize];
-            if file.seek(SeekFrom::Start(start)).is_ok() && file.read_exact(&mut buf).is_ok() {
-                return tauri::http::Response::builder()
-                    .status(206)
-                    .header("Content-Type", mime_type)
-                    .header("Content-Range", format!("bytes {}-{}/{}", start, end, file_size))
-                    .header("Content-Length", len.to_string())
-                    .header("Accept-Ranges", "bytes")
-                    .body(buf)
-                    .unwrap();
+            if start < file_size && end >= start {
+                let len = (end - start) + 1;
+                let mut buf = vec![0u8; len as usize];
+                if file.seek(SeekFrom::Start(start)).is_ok() && file.read_exact(&mut buf).is_ok() {
+                    return tauri::http::Response::builder()
+                        .status(206)
+                        .header("Content-Type", mime_type)
+                        .header("Content-Range", format!("bytes {}-{}/{}", start, end, file_size))
+                        .header("Content-Length", len.to_string())
+                        .header("Accept-Ranges", "bytes")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(buf)
+                        .unwrap();
+                }
             }
         }
     }
 
-    // Low-memory streaming fallback: read only initial 64KB chunk instead of buffering full file into RAM
-    let max_initial = 65536usize;
-    let chunk_len = (file_size as usize).min(max_initial);
-    let mut initial_buf = vec![0u8; chunk_len];
-    let n = file.read(&mut initial_buf).unwrap_or(0);
-    initial_buf.truncate(n);
-
-    tauri::http::Response::builder()
-        .status(200)
-        .header("Content-Type", mime_type)
-        .header("Content-Length", file_size.to_string())
-        .header("Accept-Ranges", "bytes")
-        .body(initial_buf)
-        .unwrap()
+    // Full file response for complete playback
+    let mut full_buf = Vec::with_capacity(file_size as usize);
+    if file.read_to_end(&mut full_buf).is_ok() {
+        tauri::http::Response::builder()
+            .status(200)
+            .header("Content-Type", mime_type)
+            .header("Content-Length", full_buf.len().to_string())
+            .header("Accept-Ranges", "bytes")
+            .header("Access-Control-Allow-Origin", "*")
+            .body(full_buf)
+            .unwrap()
+    } else {
+        tauri::http::Response::builder()
+            .status(500)
+            .header("Access-Control-Allow-Origin", "*")
+            .body(b"Failed to read file".to_vec())
+            .unwrap()
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
