@@ -67,6 +67,8 @@ const editAlbum = document.getElementById('editAlbum');
 const editGenre = document.getElementById('editGenre');
 const editYear = document.getElementById('editYear');
 const editBpm = document.getElementById('editBpm');
+const btnAutoDetectBpm = document.getElementById('btnAutoDetectBpm');
+const navBatchBpm = document.getElementById('navBatchBpm');
 const editKey = document.getElementById('editKey');
 const editLocation = document.getElementById('editLocation');
 const editComments = document.getElementById('editComments');
@@ -1429,6 +1431,51 @@ async function saveTrackEdit(e) {
   }
 }
 
+async function handleAutoDetectBpm() {
+  const trackId = Number(editTrackId.value);
+  if (!trackId) return;
+
+  const btn = btnAutoDetectBpm;
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin">⏳</span> 解析中...';
+
+  try {
+    const bpmVal = await callCommand('analyze_track_bpm', { trackId });
+    btn.disabled = false;
+    btn.innerHTML = '<span>✓ 完了</span>';
+    setTimeout(() => { btn.innerHTML = originalHtml; }, 2000);
+
+    if (bpmVal) {
+      editBpm.value = Number(bpmVal).toFixed(2);
+
+      const found = currentTracks.find(t => (t.id ?? t.track_id) === trackId);
+      if (found) {
+        found.bpm = bpmVal;
+      }
+
+      if (activeTrack && ((activeTrack.id ?? activeTrack.track_id) === trackId)) {
+        activeTrack.bpm = bpmVal;
+        deckBpm.textContent = `BPM: ${Number(bpmVal).toFixed(1)}`;
+        drawWaveform();
+      }
+
+      renderTrackTable(currentTracks);
+    }
+  } catch (err) {
+    console.error('BPM analysis failed:', err);
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    await showConfirmDialog(
+      'BPM解析エラー',
+      `BPMの自動解析に失敗しました:\n${err.message || String(err)}`,
+      '⚠️',
+      '閉じる',
+      true
+    );
+  }
+}
+
 let currentWaveformPeaks = null;
 let audioCtx = null;
 
@@ -2003,6 +2050,70 @@ function setupEvents() {
       if (activeTrack) openEditModal(activeTrack);
     });
   }
+  if (btnAutoDetectBpm) btnAutoDetectBpm.addEventListener('click', handleAutoDetectBpm);
+
+  // Deck BPM Click Handler (Quick Analyze)
+  if (deckBpm) {
+    deckBpm.addEventListener('click', async () => {
+      if (!activeTrack) return;
+      const trackId = activeTrack.id ?? activeTrack.track_id;
+      const ok = await showConfirmDialog(
+        'BPM自動解析',
+        `「${activeTrack.title || '選択中の楽曲'}」のBPMを楽曲波形から自動計算しますか？`,
+        '⚡',
+        '解析実行',
+        false
+      );
+      if (!ok) return;
+
+      deckBpm.textContent = 'BPM: ⏳...';
+      try {
+        const bpmVal = await callCommand('analyze_track_bpm', { trackId });
+        activeTrack.bpm = bpmVal;
+        const found = currentTracks.find(t => (t.id ?? t.track_id) === trackId);
+        if (found) found.bpm = bpmVal;
+        deckBpm.textContent = `BPM: ${bpmVal.toFixed(1)}`;
+        drawWaveform();
+        renderTrackTable(currentTracks);
+      } catch (err) {
+        deckBpm.textContent = `BPM: ${activeTrack.bpm ? activeTrack.bpm.toFixed(1) : '--'}`;
+        await showConfirmDialog('解析エラー', err.message || String(err), '⚠️', '閉じる', true);
+      }
+    });
+  }
+
+  // Batch BPM Analysis Handler
+  if (navBatchBpm) {
+    navBatchBpm.addEventListener('click', async () => {
+      if (!isDeviceConnected) {
+        await showConfirmDialog('実機未接続', 'Pacemaker 実機を接続してください。', '🔌', '了解', true);
+        return;
+      }
+
+      const unindexedCount = currentTracks.filter(t => !t.bpm || t.bpm <= 0).length;
+      const msg = unindexedCount > 0 
+        ? `実機内のBPM未登録楽曲（${unindexedCount}曲）をスキャンして自動解析しますか？`
+        : '実機内のBPM未設定の楽曲を自動解析しますか？';
+
+      const ok = await showConfirmDialog('BPM一括自動解析', msg, '⚡', '解析開始', false);
+      if (!ok) return;
+
+      try {
+        const count = await callCommand('batch_analyze_unindexed_bpm');
+        await loadTracks();
+        await showConfirmDialog(
+          'BPM一括解析完了',
+          `${count} 曲のBPMを自動解析し、Pacemaker実機へ正常に保存しました！`,
+          '✓',
+          '了解',
+          true
+        );
+      } catch (err) {
+        await showConfirmDialog('一括解析エラー', err.message || String(err), '⚠️', '閉じる', true);
+      }
+    });
+  }
+
   if (btnModalClose) btnModalClose.addEventListener('click', closeEditModal);
   if (btnModalCancel) btnModalCancel.addEventListener('click', closeEditModal);
   if (editTrackForm) editTrackForm.addEventListener('submit', saveTrackEdit);

@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tauri::command;
 
+pub mod bpm;
+
 use pacemaker_core::db::PacemakerDb;
 use pacemaker_core::firmware::{detect_pacemaker_device, PfwInfo};
 use pacemaker_core::types::{CaseItem, TrackId, TrackMetadata, TimeMs};
@@ -954,6 +956,12 @@ async fn import_youtube_track(
         let str_content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<TrackAnalysedData>\n\t<normalizeFactor>1</normalizeFactor>\n\t<beatStartOffset>0</beatStartOffset>\n\t<realBeatLocations></realBeatLocations>\n</TrackAnalysedData>\n";
         let _ = fs::write(&str_path, str_content);
 
+        // Estimate BPM from downloaded audio
+        let detected_bpm = bpm::estimate_bpm(&audio_file).or_else(|| bpm::estimate_bpm(&dest_path));
+        if let Some(b) = detected_bpm {
+            log::info!("Calculated BPM for imported YouTube track '{}': {:.1}", raw_title, b);
+        }
+
         // Register in SQLite music.db
         let track_input = pacemaker_core::db::NewTrackInput {
             title: raw_title.clone(),
@@ -967,7 +975,7 @@ async fn import_youtube_track(
             sample_rate: 44100,
             format: "MPEG-1 Layer 3".into(),
             location: paths.virtual_location.clone(),
-            bpm: None,
+            bpm: detected_bpm,
             key: None,
             comments: Some(format!("Imported from YouTube: {}", video_id)),
         };
@@ -1049,6 +1057,12 @@ fn import_local_track(
     let str_content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<TrackAnalysedData>\n\t<normalizeFactor>1</normalizeFactor>\n\t<beatStartOffset>0</beatStartOffset>\n\t<realBeatLocations></realBeatLocations>\n</TrackAnalysedData>\n";
     let _ = fs::write(&str_path, str_content);
 
+    // Estimate BPM from imported audio
+    let detected_bpm = bpm::estimate_bpm(&dest_path);
+    if let Some(b) = detected_bpm {
+        log::info!("Calculated BPM for local track '{}': {:.1}", raw_title, b);
+    }
+
     let mut target_case_id: Option<i64> = None;
     if let Some(ref cname) = case_name {
         let trimmed_case = cname.trim();
@@ -1070,7 +1084,7 @@ fn import_local_track(
         sample_rate: 44100,
         format: format!("Audio ({})", ext.to_uppercase()),
         location: paths.virtual_location.clone(),
-        bpm: None,
+        bpm: detected_bpm,
         key: None,
         comments: Some(format!("Local import: {}", file_name)),
     };
@@ -1199,6 +1213,73 @@ fn serve_audio_request(req: tauri::http::Request<Vec<u8>>) -> tauri::http::Respo
     }
 }
 
+#[command]
+fn analyze_track_bpm(track_id: TrackId) -> Result<f64, String> {
+    let track = with_db(|db| {
+        db.get_track(track_id)
+            .map_err(|e| format!("Track not found: {}", e))
+    })?
+    .ok_or_else(|| format!("Track with id {} not found in database", track_id))?;
+
+    let file_path = resolve_track_file_path(&track.virtual_location)
+        .ok_or_else(|| format!("Audio file not found on disk: {}", track.virtual_location))?;
+
+    let estimated = bpm::estimate_bpm(&file_path)
+        .ok_or_else(|| "BPMの自動解析に失敗しました。リズム成分が不明瞭か、ffmpegが応答しませんでした。".to_string())?;
+
+    with_db(|db| {
+        db.update_track_metadata(
+            track_id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(estimated),
+            None,
+            None,
+        )
+        .map_err(|e| format!("Failed to update track BPM in database: {}", e))
+    })?;
+
+    if let Some(vol) = resolve_pacemaker_volume() {
+        touch_syncfile(&vol);
+    }
+
+    log::info!("Successfully analyzed and saved BPM {:.1} for track_id {}", estimated, track_id);
+    Ok(estimated)
+}
+
+#[command]
+fn batch_analyze_unindexed_bpm() -> Result<usize, String> {
+    let unindexed = with_db(|db| {
+        db.get_unindexed_bpm_tracks()
+            .map_err(|e| format!("Database query error: {}", e))
+    })?;
+
+    let mut count = 0;
+    for (track_id, loc) in unindexed {
+        if let Some(file_path) = resolve_track_file_path(&loc) {
+            if let Some(bpm_val) = bpm::estimate_bpm(&file_path) {
+                let _ = with_db(|db| {
+                    db.update_track_metadata(track_id, None, None, None, None, None, Some(bpm_val), None, None)
+                        .map_err(|e| e.to_string())
+                });
+                count += 1;
+            }
+        }
+    }
+
+    if count > 0 {
+        if let Some(vol) = resolve_pacemaker_volume() {
+            touch_syncfile(&vol);
+        }
+    }
+
+    log::info!("Batch analyzed and updated BPM for {} tracks", count);
+    Ok(count)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1226,7 +1307,9 @@ pub fn run() {
             save_youtube_cookies,
             clear_youtube_cookies,
             test_youtube_auth,
-            open_in_browser
+            open_in_browser,
+            analyze_track_bpm,
+            batch_analyze_unindexed_bpm
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

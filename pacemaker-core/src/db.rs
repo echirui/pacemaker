@@ -283,6 +283,18 @@ impl PacemakerDb {
         Ok(())
     }
 
+    pub fn get_unindexed_bpm_tracks(&self) -> Result<Vec<(TrackId, String)>> {
+        let mut stmt = self.conn.prepare("SELECT track_id, location FROM tracks WHERE bpm IS NULL OR bpm <= 0")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get::<_, Option<String>>(1)?.unwrap_or_default()))
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
     pub fn delete_track(&self, track_id: TrackId) -> Result<()> {
         self.conn.execute("DELETE FROM tracks WHERE track_id = ?1", params![track_id])?;
         self.conn.execute("DELETE FROM casetracks WHERE track_id = ?1", params![track_id])?;
@@ -354,7 +366,7 @@ impl PacemakerDb {
         let ind_artist = input.artist.to_lowercase();
         let ind_album = input.album.as_deref().unwrap_or("").to_lowercase();
         let ind_genre = input.genre.as_deref().unwrap_or("").to_lowercase();
-        let ind_bpm = input.bpm.map(|b| b.round() as i64).unwrap_or(0);
+        let ind_bpm = input.bpm.map(|b| ((b / 10.0).floor() as i64) * 10).unwrap_or(0);
         let bpm_val = input.bpm.unwrap_or(0.0);
         let album_val = input.album.as_deref().unwrap_or("");
         let genre_val = input.genre.as_deref().unwrap_or("");

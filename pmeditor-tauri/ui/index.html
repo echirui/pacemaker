@@ -57,7 +57,7 @@
           <p id="deckArtist" class="deck-artist">-</p>
         </div>
         <div class="deck-stats">
-          <span id="deckBpm" class="stat-pill">BPM: --</span>
+          <span id="deckBpm" class="stat-pill" style="cursor: pointer;" title="クリックしてBPMを自動解析">BPM: --</span>
           <span id="deckKey" class="stat-pill">KEY: --</span>
           <span id="deckTime" class="stat-pill">0:00 / 0:00</span>
         </div>
@@ -123,12 +123,16 @@
         </div>
 
         <div class="sidebar-section">
-          <h3>外部連携</h3>
+          <h3>ツール・外部連携</h3>
           <ul class="nav-list">
             <li id="navOpenYtLogin" style="cursor: pointer;">
               <span class="icon">🔐</span>
               <span class="label">YouTube ログイン設定</span>
               <span id="navAuthBadge" class="nav-badge guest" style="margin-left: auto;">未設定</span>
+            </li>
+            <li id="navBatchBpm" style="cursor: pointer;" title="実機内の未解析曲のBPMを一括自動計算して保存">
+              <span class="icon">⚡</span>
+              <span class="label">BPM一括自動解析</span>
             </li>
           </ul>
         </div>
@@ -225,7 +229,12 @@
           <div class="form-row">
             <div class="form-group flex-1">
               <label for="editBpm">BPM</label>
-              <input type="number" id="editBpm" step="0.01" min="20" max="300" placeholder="128.0">
+              <div style="display: flex; gap: 6px;">
+                <input type="number" id="editBpm" step="0.01" min="20" max="300" placeholder="128.0" style="flex: 1;">
+                <button type="button" id="btnAutoDetectBpm" class="btn btn-sm btn-secondary" title="楽曲を解析してBPMを自動検出" style="white-space: nowrap; padding: 0 8px; font-size: 11px;">
+                  <span>⚡ 自動解析</span>
+                </button>
+              </div>
             </div>
             <div class="form-group flex-1">
               <label for="editKey">KEY</label>
