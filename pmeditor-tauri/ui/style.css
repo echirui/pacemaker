@@ -1059,3 +1059,24 @@ body {
   font-size: 11px;
   padding: 4px 10px;
 }
+
+.nav-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 10px;
+  letter-spacing: 0.2px;
+  line-height: 1.2;
+}
+
+.nav-badge.guest {
+  background: rgba(255, 171, 0, 0.15);
+  color: #ffab00;
+  border: 1px solid rgba(255, 171, 0, 0.3);
+}
+
+.nav-badge.active {
+  background: rgba(0, 230, 118, 0.15);
+  color: #00e676;
+  border: 1px solid rgba(0, 230, 118, 0.3);
+}

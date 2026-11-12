@@ -81,20 +81,31 @@ const ytStatusBox = document.getElementById('ytStatusBox');
 const ytStatusText = document.getElementById('ytStatusText');
 const btnYtSubmit = document.getElementById('btnYtSubmit');
 
-// YouTube Auth Elements
-const ytAuthBanner = document.getElementById('ytAuthBanner');
-const ytAuthBadge = document.getElementById('ytAuthBadge');
-const ytAuthDetail = document.getElementById('ytAuthDetail');
-const btnToggleAuthPanel = document.getElementById('btnToggleAuthPanel');
-const btnToggleAuthText = document.getElementById('btnToggleAuthText');
-const ytAuthPanel = document.getElementById('ytAuthPanel');
+// YouTube Dedicated Auth Modal Elements
+const btnOpenYtAuthModal = document.getElementById('btnOpenYtAuthModal');
+const navOpenYtLogin = document.getElementById('navOpenYtLogin');
+const btnOpenAuthFromImport = document.getElementById('btnOpenAuthFromImport');
+const ytAuthModal = document.getElementById('ytAuthModal');
+const btnYtAuthModalClose = document.getElementById('btnYtAuthModalClose');
+const btnYtAuthModalCancel = document.getElementById('btnYtAuthModalCancel');
+const btnModalClearAuth = document.getElementById('btnModalClearAuth');
+
+// Badges & Labels
+const headerAuthIcon = document.getElementById('headerAuthIcon');
+const headerAuthText = document.getElementById('headerAuthText');
+const headerAuthBadge = document.getElementById('headerAuthBadge');
+const navAuthBadge = document.getElementById('navAuthBadge');
+const ytImportAuthBadge = document.getElementById('ytImportAuthBadge');
+const ytImportAuthDetail = document.getElementById('ytImportAuthDetail');
+const modalAuthBadge = document.getElementById('modalAuthBadge');
+const modalAuthDetail = document.getElementById('modalAuthDetail');
+
 const cookieDropArea = document.getElementById('cookieDropArea');
 const cookieDropLabel = document.getElementById('cookieDropLabel');
 const cookieFileInput = document.getElementById('cookieFileInput');
 const cookiePasteArea = document.getElementById('cookiePasteArea');
 const btnSaveCookies = document.getElementById('btnSaveCookies');
 const btnTestAuth = document.getElementById('btnTestAuth');
-const btnClearAuth = document.getElementById('btnClearAuth');
 const ytBrowserSelect = document.getElementById('ytBrowserSelect');
 const btnTestBrowser = document.getElementById('btnTestBrowser');
 const btnLinkYtMusic = document.getElementById('btnLinkYtMusic');
@@ -102,20 +113,59 @@ const btnOpenBrowserYt = document.getElementById('btnOpenBrowserYt');
 const ytAuthMsg = document.getElementById('ytAuthMsg');
 let currentAuthStatus = null;
 
+function openYtAuthModal() {
+  if (ytAuthMsg) ytAuthMsg.classList.add('hidden');
+  ytAuthModal.classList.remove('hidden');
+  loadYoutubeAuthStatus();
+}
+
+function closeYtAuthModal() {
+  ytAuthModal.classList.add('hidden');
+}
+
 async function loadYoutubeAuthStatus() {
   try {
     const status = await callCommand('get_youtube_auth_status');
     currentAuthStatus = status;
-    if (status.is_logged_in) {
-      ytAuthBadge.className = 'yt-auth-badge active';
-      ytAuthBadge.textContent = '🟢 ログイン中 (YouTube Music)';
-      ytAuthDetail.textContent = status.details || 'ログインセッション有効 (非公開プレイリスト・高音質対応)';
-      if (btnClearAuth) btnClearAuth.classList.remove('hidden');
-    } else {
-      ytAuthBadge.className = 'yt-auth-badge guest';
-      ytAuthBadge.textContent = '⚪ 未ログイン (ゲストモード)';
-      ytAuthDetail.textContent = status.details || 'ログインすると非公開プレイリストや高音質ストリームを取得できます';
-      if (btnClearAuth) btnClearAuth.classList.add('hidden');
+    const isLogged = status && status.is_logged_in;
+    const badgeText = isLogged ? 'ログイン中' : '未ログイン';
+    const badgeClass = isLogged ? 'nav-badge active' : 'nav-badge guest';
+    const bannerBadgeClass = isLogged ? 'yt-auth-badge active' : 'yt-auth-badge guest';
+    const bannerBadgeText = isLogged ? '🟢 ログイン中 (YouTube Music)' : '⚪ 未ログイン (ゲストモード)';
+    const detailText = isLogged
+      ? (status.details || 'ログインセッション有効 (非公開プレイリスト・高音質対応)')
+      : '非公開プレイリストや高音質音源を取得するにはログインしてください';
+
+    if (headerAuthBadge) {
+      headerAuthBadge.className = badgeClass;
+      headerAuthBadge.textContent = badgeText;
+    }
+    if (headerAuthIcon) {
+      headerAuthIcon.textContent = isLogged ? '🟢' : '🔐';
+    }
+    if (headerAuthText) {
+      headerAuthText.textContent = isLogged ? 'YouTube ログイン中' : 'YouTube ログイン設定';
+    }
+    if (navAuthBadge) {
+      navAuthBadge.className = badgeClass;
+      navAuthBadge.textContent = badgeText;
+    }
+    if (ytImportAuthBadge) {
+      ytImportAuthBadge.className = bannerBadgeClass;
+      ytImportAuthBadge.textContent = bannerBadgeText;
+    }
+    if (ytImportAuthDetail) {
+      ytImportAuthDetail.textContent = detailText;
+    }
+    if (modalAuthBadge) {
+      modalAuthBadge.className = bannerBadgeClass;
+      modalAuthBadge.textContent = bannerBadgeText;
+    }
+    if (modalAuthDetail) {
+      modalAuthDetail.textContent = detailText;
+    }
+    if (btnModalClearAuth) {
+      btnModalClearAuth.classList.toggle('hidden', !isLogged);
     }
   } catch (err) {
     console.error('Failed to load YouTube auth status:', err);
@@ -130,11 +180,20 @@ function showAuthFeedback(msg, isSuccess = true) {
 }
 
 function initYoutubeAuthHandlers() {
-  // Toggle Auth Panel
-  if (btnToggleAuthPanel) {
-    btnToggleAuthPanel.addEventListener('click', () => {
-      const isHidden = ytAuthPanel.classList.toggle('hidden');
-      btnToggleAuthText.textContent = isHidden ? '🔐 ログイン設定' : '▲ 設定を閉じる';
+  // Open / Close Auth Modal
+  if (btnOpenYtAuthModal) btnOpenYtAuthModal.addEventListener('click', openYtAuthModal);
+  if (navOpenYtLogin) navOpenYtLogin.addEventListener('click', openYtAuthModal);
+  if (btnOpenAuthFromImport) {
+    btnOpenAuthFromImport.addEventListener('click', () => {
+      closeYtModal();
+      openYtAuthModal();
+    });
+  }
+  if (btnYtAuthModalClose) btnYtAuthModalClose.addEventListener('click', closeYtAuthModal);
+  if (btnYtAuthModalCancel) btnYtAuthModalCancel.addEventListener('click', closeYtAuthModal);
+  if (ytAuthModal) {
+    ytAuthModal.addEventListener('click', (e) => {
+      if (e.target === ytAuthModal) closeYtAuthModal();
     });
   }
 
@@ -209,7 +268,7 @@ function initYoutubeAuthHandlers() {
     try {
       await callCommand('save_youtube_cookies', { content: val });
       await loadYoutubeAuthStatus();
-      showAuthFeedback('✓ Cookieを保存しました！ログイン状態が有効化されました。', true);
+      showAuthFeedback('✓ Cookieを保存しました！YouTube Music ログインが有効化されました。', true);
     } catch (err) {
       showAuthFeedback(`保存失敗: ${err.message || String(err)}`, false);
     }
@@ -220,11 +279,11 @@ function initYoutubeAuthHandlers() {
   }
 
   // Clear Cookies (Logout)
-  if (btnClearAuth) {
-    btnClearAuth.addEventListener('click', async () => {
+  if (btnModalClearAuth) {
+    btnModalClearAuth.addEventListener('click', async () => {
       try {
         await callCommand('clear_youtube_cookies');
-        cookiePasteArea.value = '';
+        if (cookiePasteArea) cookiePasteArea.value = '';
         if (cookieDropLabel) cookieDropLabel.textContent = 'cookies.txt をここにドラッグ＆ドロップ';
         await loadYoutubeAuthStatus();
         showAuthFeedback('ログアウトしました (ゲストモードに戻りました)。', true);
@@ -287,15 +346,22 @@ function initYoutubeAuthHandlers() {
   }
 }
 
-function openYtModal() {
+async function openYtModal() {
   if (!isDeviceConnected) {
-    showConfirmDialog('実機未接続', 'Pacemaker 実機が接続されていません。USBケーブルで実機を接続してから楽曲を追加してください。', '🔌', '了解');
+    const wantLogin = await showConfirmDialog(
+      '実機未接続',
+      'Pacemaker 実機が接続されていません。実機への楽曲転送はUSB接続が必要ですが、YouTube Musicのログイン設定を行いますか？',
+      '🔌',
+      '🔐 ログイン設定を開く'
+    );
+    if (wantLogin) {
+      openYtAuthModal();
+    }
     return;
   }
   ytInputUrl.value = '';
   ytCaseName.value = '';
   ytStatusBox.classList.add('hidden');
-  if (ytAuthMsg) ytAuthMsg.classList.add('hidden');
   btnYtSubmit.disabled = false;
   btnYtSubmit.innerHTML = '<span>⬇️ ダウンロードして転送</span>';
   ytModal.classList.remove('hidden');
@@ -495,6 +561,7 @@ async function boot() {
 
   // Initial check of physical device connection
   await loadDeviceStatus();
+  await loadYoutubeAuthStatus();
 
   // Background hardware connection polling (plug / unplug auto-detection)
   setInterval(() => {
@@ -1494,6 +1561,8 @@ function setupEvents() {
         closePrompt(null);
       } else if (editModal && !editModal.classList.contains('hidden')) {
         closeEditModal();
+      } else if (ytAuthModal && !ytAuthModal.classList.contains('hidden')) {
+        closeYtAuthModal();
       } else if (ytModal && !ytModal.classList.contains('hidden') && !btnYtSubmit.disabled) {
         closeYtModal();
       }
@@ -1504,7 +1573,7 @@ function setupEvents() {
 function initDragDrop() {
   window.addEventListener('dragover', (e) => {
     e.preventDefault();
-    if (ytModal && !ytModal.classList.contains('hidden')) {
+    if ((ytModal && !ytModal.classList.contains('hidden')) || (ytAuthModal && !ytAuthModal.classList.contains('hidden'))) {
       return;
     }
     dropOverlay.classList.remove('hidden');

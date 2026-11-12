@@ -30,6 +30,11 @@
       </div>
 
       <div class="header-right">
+        <button id="btnOpenYtAuthModal" class="btn btn-secondary" title="YouTube Music のアカウントログイン・Cookie設定" style="display: inline-flex; align-items: center; gap: 6px;">
+          <span id="headerAuthIcon">🔐</span>
+          <span id="headerAuthText">YouTube ログイン設定</span>
+          <span id="headerAuthBadge" class="nav-badge guest">未ログイン</span>
+        </button>
         <button id="btnOpenYtModal" class="btn btn-yt" title="YouTube / YouTube Music から楽曲をダウンロードして追加">
           <span class="yt-icon">▶</span>
           <span>YouTube Music から追加</span>
@@ -114,6 +119,17 @@
           </div>
           <ul class="nav-list" id="caseList">
             <!-- Dynamic cases list -->
+          </ul>
+        </div>
+
+        <div class="sidebar-section">
+          <h3>外部連携</h3>
+          <ul class="nav-list">
+            <li id="navOpenYtLogin" style="cursor: pointer;">
+              <span class="icon">🔐</span>
+              <span class="label">YouTube ログイン設定</span>
+              <span id="navAuthBadge" class="nav-badge guest" style="margin-left: auto;">未設定</span>
+            </li>
           </ul>
         </div>
 
@@ -245,91 +261,15 @@
           <button type="button" id="btnYtModalClose" class="btn-icon btn-modal-close" title="閉じる">×</button>
         </div>
         <form id="ytImportForm" class="modal-body">
-          <!-- YouTube Music Authentication Banner -->
-          <div class="yt-auth-banner" id="ytAuthBanner">
+          <!-- YouTube Music Authentication Quick Status -->
+          <div class="yt-auth-banner" id="ytImportAuthBanner">
             <div class="yt-auth-status-info">
-              <span id="ytAuthBadge" class="yt-auth-badge guest">⚪ 未ログイン (ゲスト)</span>
-              <span id="ytAuthDetail" class="yt-auth-detail">ログインすると非公開プレイリストや高音質ストリームを取得できます</span>
+              <span id="ytImportAuthBadge" class="yt-auth-badge guest">⚪ 未ログイン (ゲスト)</span>
+              <span id="ytImportAuthDetail" class="yt-auth-detail">非公開プレイリストや高音質音源を取得するにはログインしてください</span>
             </div>
-            <button type="button" id="btnToggleAuthPanel" class="btn btn-sm btn-secondary">
-              <span id="btnToggleAuthText">🔐 ログイン設定</span>
+            <button type="button" id="btnOpenAuthFromImport" class="btn btn-sm btn-secondary">
+              <span>🔐 ログイン設定</span>
             </button>
-          </div>
-
-          <!-- YouTube Music Authentication Settings Panel (collapsible) -->
-          <div id="ytAuthPanel" class="yt-auth-panel hidden">
-            <div class="yt-auth-tabs">
-              <button type="button" class="yt-auth-tab active" data-tab="ytTabCookies">📁 Cookieファイル / 貼り付け</button>
-              <button type="button" class="yt-auth-tab" data-tab="ytTabBrowser">🌐 ブラウザから自動取得</button>
-              <button type="button" class="yt-auth-tab" data-tab="ytTabGuide">📖 ログイン方法ガイド</button>
-            </div>
-
-            <!-- Tab 1: Cookie File & Paste -->
-            <div id="ytTabCookies" class="yt-tab-pane">
-              <p class="yt-auth-subtext">ブラウザでエクスポートした <code>cookies.txt</code> (Netscape形式) を指定または内容を貼り付けてください。</p>
-              
-              <div class="cookie-drop-area" id="cookieDropArea">
-                <span class="cookie-drop-icon">📑</span>
-                <span class="cookie-drop-label" id="cookieDropLabel">cookies.txt をここにドラッグ＆ドロップ</span>
-                <label for="cookieFileInput" class="btn btn-secondary btn-xs" style="cursor: pointer;">
-                  ファイル選択...
-                </label>
-                <input type="file" id="cookieFileInput" accept=".txt" style="display: none;">
-              </div>
-
-              <div style="margin-top: 10px;">
-                <label for="cookiePasteArea" style="font-size: 11px; color: #a0aec0; display: block; margin-bottom: 4px;">または Cookieテキストを直接貼り付け:</label>
-                <textarea id="cookiePasteArea" rows="3" placeholder="# Netscape HTTP Cookie File または youtube.com のCookie行をここに貼り付け" class="cookie-textarea"></textarea>
-              </div>
-
-              <div class="yt-auth-actions">
-                <button type="button" id="btnSaveCookies" class="btn btn-primary btn-sm">💾 保存してログイン</button>
-                <button type="button" id="btnTestAuth" class="btn btn-secondary btn-sm">🧪 接続テスト</button>
-                <button type="button" id="btnClearAuth" class="btn btn-danger btn-sm hidden">🚪 ログアウト (Cookie削除)</button>
-              </div>
-            </div>
-
-            <!-- Tab 2: Browser Extraction -->
-            <div id="ytTabBrowser" class="yt-tab-pane hidden">
-              <p class="yt-auth-subtext">Macにインストール済みのWebブラウザからログインセッションを取得します。</p>
-              <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px;">
-                <select id="ytBrowserSelect" class="yt-browser-select">
-                  <option value="chrome">Google Chrome (推奨)</option>
-                  <option value="safari">Apple Safari</option>
-                  <option value="firefox">Mozilla Firefox</option>
-                  <option value="brave">Brave Browser</option>
-                  <option value="edge">Microsoft Edge</option>
-                </select>
-                <button type="button" id="btnTestBrowser" class="btn btn-secondary btn-sm">連携テスト</button>
-              </div>
-              <p class="yt-browser-warning">
-                ⚠️ macOSのプライバシー保護機能によりブラウザのCookieデータベースへの直接アクセスがブロックされる場合があります。その場合は「📁 Cookieファイル / 貼り付け」をご利用ください。
-              </p>
-            </div>
-
-            <!-- Tab 3: Guide -->
-            <div id="ytTabGuide" class="yt-tab-pane hidden">
-              <div class="yt-guide-card">
-                <div class="yt-guide-step">
-                  <span class="guide-num">1</span>
-                  <div>ブラウザで <a href="#" id="btnLinkYtMusic" style="color: #00e5ff; text-decoration: underline;">YouTube Music</a> を開き、普段のアカウントでログインします。</div>
-                </div>
-                <div class="yt-guide-step">
-                  <span class="guide-num">2</span>
-                  <div>ブラウザ拡張機能「<strong>Get cookies.txt LOCALLY</strong>」(無料・オープンソース) などを使い、<code>youtube.com</code> のCookieを保存またはコピーします。</div>
-                </div>
-                <div class="yt-guide-step">
-                  <span class="guide-num">3</span>
-                  <div>「Cookieファイル / 貼り付け」タブでファイルを指定またはテキストを貼り付けて「保存」をクリックします。</div>
-                </div>
-                <div style="margin-top: 10px; display: flex; gap: 8px;">
-                  <button type="button" id="btnOpenBrowserYt" class="btn btn-secondary btn-sm">🌐 ブラウザでYouTube Musicを開く</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Test Feedback Display -->
-            <div id="ytAuthMsg" class="hidden yt-auth-feedback"></div>
           </div>
 
           <div class="form-group" style="margin-bottom: 14px;">
@@ -363,6 +303,105 @@
             </button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Dedicated YouTube Music Authentication / Login Modal -->
+    <div id="ytAuthModal" class="modal-overlay hidden">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-icon" style="color: #ff0055;">🔐</span>
+            <h3 class="modal-title">YouTube Music ログイン設定</h3>
+          </div>
+          <button type="button" id="btnYtAuthModalClose" class="btn-icon btn-modal-close" title="閉じる">×</button>
+        </div>
+        <div class="modal-body">
+          <!-- Active Status Card -->
+          <div class="yt-auth-banner" style="margin-bottom: 16px;">
+            <div class="yt-auth-status-info">
+              <span id="modalAuthBadge" class="yt-auth-badge guest">⚪ 未ログイン (ゲストモード)</span>
+              <span id="modalAuthDetail" class="yt-auth-detail">ログインすると非公開プレイリストや高音質ストリームを取得できます</span>
+            </div>
+            <button type="button" id="btnModalClearAuth" class="btn btn-sm btn-danger hidden">ログアウト (Cookie削除)</button>
+          </div>
+
+          <div class="yt-auth-tabs">
+            <button type="button" class="yt-auth-tab active" data-tab="authTabCookies">📁 Cookieファイル / 貼り付け (推奨)</button>
+            <button type="button" class="yt-auth-tab" data-tab="authTabBrowser">🌐 ブラウザ自動取得</button>
+            <button type="button" class="yt-auth-tab" data-tab="authTabGuide">📖 ログイン方法ガイド</button>
+          </div>
+
+          <!-- Tab 1: Cookie File & Direct Paste -->
+          <div id="authTabCookies" class="yt-tab-pane">
+            <p class="yt-auth-subtext">ブラウザでエクスポートした <code>cookies.txt</code> (Netscape形式) を指定または内容を貼り付けてください。</p>
+            
+            <div class="cookie-drop-area" id="cookieDropArea">
+              <span class="cookie-drop-icon">📑</span>
+              <span class="cookie-drop-label" id="cookieDropLabel">cookies.txt をここにドラッグ＆ドロップ</span>
+              <label for="cookieFileInput" class="btn btn-secondary btn-xs" style="cursor: pointer;">
+                ファイル選択...
+              </label>
+              <input type="file" id="cookieFileInput" accept=".txt" style="display: none;">
+            </div>
+
+            <div style="margin-top: 12px;">
+              <label for="cookiePasteArea" style="font-size: 11px; color: #a0aec0; display: block; margin-bottom: 4px;">または Cookieテキストを直接貼り付け:</label>
+              <textarea id="cookiePasteArea" rows="4" placeholder="# Netscape HTTP Cookie File または youtube.com のCookie行をここに貼り付け" class="cookie-textarea"></textarea>
+            </div>
+
+            <div class="yt-auth-actions" style="margin-top: 12px;">
+              <button type="button" id="btnSaveCookies" class="btn btn-primary btn-sm">💾 保存してログイン</button>
+              <button type="button" id="btnTestAuth" class="btn btn-secondary btn-sm">🧪 接続テスト</button>
+            </div>
+          </div>
+
+          <!-- Tab 2: Browser Extraction -->
+          <div id="authTabBrowser" class="yt-tab-pane hidden">
+            <p class="yt-auth-subtext">お使いのMacにインストールされているブラウザから自動でログイン情報を抽出します。</p>
+            <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px;">
+              <select id="ytBrowserSelect" class="yt-browser-select">
+                <option value="chrome">Google Chrome (推奨)</option>
+                <option value="safari">Apple Safari</option>
+                <option value="firefox">Mozilla Firefox</option>
+                <option value="brave">Brave Browser</option>
+                <option value="edge">Microsoft Edge</option>
+              </select>
+              <button type="button" id="btnTestBrowser" class="btn btn-secondary btn-sm">ブラウザ連携テスト</button>
+            </div>
+            <p class="yt-browser-warning">
+              ⚠️ macOSのプライバシー保護機能によりブラウザのCookieデータベースへの直接アクセスがブロックされる場合があります。その場合は「📁 Cookieファイル / 貼り付け」をご利用ください。
+            </p>
+          </div>
+
+          <!-- Tab 3: Guide -->
+          <div id="authTabGuide" class="yt-tab-pane hidden">
+            <div class="yt-guide-card">
+              <div class="yt-guide-step">
+                <span class="guide-num">1</span>
+                <div>ブラウザで <a href="#" id="btnLinkYtMusic" style="color: #00e5ff; text-decoration: underline;">YouTube Music (music.youtube.com)</a> を開き、普段のアカウントでログインします。</div>
+              </div>
+              <div class="yt-guide-step">
+                <span class="guide-num">2</span>
+                <div>Chrome / Firefox 拡張機能「<strong>Get cookies.txt LOCALLY</strong>」(無料・オープンソース) などを使い、<code>youtube.com</code> のCookieを保存またはコピーします。</div>
+              </div>
+              <div class="yt-guide-step">
+                <span class="guide-num">3</span>
+                <div>「Cookieファイル / 貼り付け」タブでファイルを指定またはテキストを貼り付けて「💾 保存してログイン」をクリックします。</div>
+              </div>
+              <div style="margin-top: 10px;">
+                <button type="button" id="btnOpenBrowserYt" class="btn btn-secondary btn-sm">🌐 ブラウザでYouTube Musicを開く</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Test Feedback Display -->
+          <div id="ytAuthMsg" class="hidden yt-auth-feedback"></div>
+
+          <div class="modal-footer" style="margin-top: 16px;">
+            <button type="button" id="btnYtAuthModalCancel" class="btn btn-secondary">閉じる</button>
+          </div>
+        </div>
       </div>
     </div>
 
