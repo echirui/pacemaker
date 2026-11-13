@@ -101,6 +101,34 @@ impl PacemakerDb {
             )?;
         }
 
+        // 3. Repair NULL columns that Tonium pmplayer passes to strtol() without NULL checks (causes SIGSEGV / 0201)
+        changes += self.conn.execute(
+            "UPDATE tracks SET
+                album_artist = COALESCE(album_artist, ''),
+                composer = COALESCE(composer, ''),
+                track_number = COALESCE(track_number, 0),
+                is_part_of_c = COALESCE(is_part_of_c, 0),
+                structured_ct = COALESCE(structured_ct, ''),
+                discid = COALESCE(discid, ''),
+                producer = COALESCE(producer, ''),
+                remixer = COALESCE(remixer, ''),
+                number_of_tracks = COALESCE(number_of_tracks, 0),
+                disc_number = COALESCE(disc_number, 0),
+                number_of_discs = COALESCE(number_of_discs, 0)
+            WHERE album_artist IS NULL
+               OR composer IS NULL
+               OR track_number IS NULL
+               OR is_part_of_c IS NULL
+               OR structured_ct IS NULL
+               OR discid IS NULL
+               OR producer IS NULL
+               OR remixer IS NULL
+               OR number_of_tracks IS NULL
+               OR disc_number IS NULL
+               OR number_of_discs IS NULL",
+            [],
+        )?;
+
         Ok(changes)
     }
 
@@ -487,7 +515,9 @@ impl PacemakerDb {
                 times_played, cue_point, rc_mixes, bpm, label,
                 track_flags, global_id, loop_in, loop_out, ind_title, ind_artist,
                 ind_album, ind_genre, ind_bpm, key, date_modified, modified_by_ed,
-                analyzed_by_ed, analysis_ver
+                analyzed_by_ed, analysis_ver,
+                album_artist, composer, track_number, is_part_of_c, structured_ct,
+                discid, producer, remixer, number_of_tracks, disc_number, number_of_discs
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5,
                 ?6, ?7, ?8, ?9, ?10,
@@ -495,7 +525,9 @@ impl PacemakerDb {
                 0, -1, 0, ?14, '',
                 2, ?15, -1, -1, ?16, ?17,
                 ?18, ?19, ?20, ?21, ?13, '2.0.2.14170',
-                '2.0.2.14170', 1
+                '2.0.2.14170', 1,
+                '', '', 0, 0, '',
+                '', '', '', 0, 0, 0
             )",
             params![
                 input.title,
@@ -692,6 +724,15 @@ mod tests {
 
         let gid1: String = db.conn.query_row("SELECT global_id FROM tracks WHERE track_id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(gid1.len(), 32);
+
+        let (aa, tn, dn): (String, i64, i64) = db.conn.query_row(
+            "SELECT album_artist, track_number, disc_number FROM tracks WHERE track_id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        assert_eq!(aa, "");
+        assert_eq!(tn, 0);
+        assert_eq!(dn, 0);
     }
 
     #[test]
