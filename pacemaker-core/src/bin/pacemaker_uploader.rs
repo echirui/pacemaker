@@ -497,7 +497,7 @@ fn cmd_import_yt(query: &str, case: Option<&str>, custom_dest: Option<&Path>, co
             file_size,
             bit_rate: 320,
             sample_rate: 44100,
-            format: "MPEG-1 Layer 3".to_string(),
+            format: "MP3".to_string(),
             location: paths.virtual_location,
             bpm: None,
             key: None,

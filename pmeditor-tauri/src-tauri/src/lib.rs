@@ -788,6 +788,38 @@ async fn search_youtube(
     })
 }
 
+fn generate_str_file_content(bpm: Option<f64>, duration_secs: u32) -> String {
+    let mut real_beats = String::new();
+    if let Some(b) = bpm {
+        if b > 40.0 && b < 240.0 && duration_secs > 0 {
+            let interval = 60.0 / b;
+            let mut t = 0.0;
+            let mut count = 0;
+            while t < (duration_secs as f64) && count < 2000 {
+                if !real_beats.is_empty() {
+                    real_beats.push(' ');
+                }
+                real_beats.push_str(&format!("{:.3}", t));
+                t += interval;
+                count += 1;
+            }
+        }
+    }
+
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\" ?>\n\
+        <!DOCTYPE boost_serialization>\n\
+        <boost_serialization signature=\"serialization::archive\" version=\"4\">\n\
+        <TrackAnalysedData class_id=\"0\" tracking_level=\"0\" version=\"0\">\n\
+        \t<normalizeFactor>1.0</normalizeFactor>\n\
+        \t<beatStartOffset>0</beatStartOffset>\n\
+        \t<realBeatLocations>{}</realBeatLocations>\n\
+        </TrackAnalysedData>\n\
+        </boost_serialization>\n",
+        real_beats
+    )
+}
+
 #[command]
 async fn import_youtube_track(
     query_or_url: String,
@@ -951,16 +983,16 @@ async fn import_youtube_track(
         fs::copy(&audio_file, &dest_path)
             .map_err(|e| format!("Pacemaker ストレージへのファイル転送に失敗しました: {}", e))?;
 
-        // Generate corresponding waveform .str file
-        let str_path = dest_path.with_extension("str");
-        let str_content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<TrackAnalysedData>\n\t<normalizeFactor>1</normalizeFactor>\n\t<beatStartOffset>0</beatStartOffset>\n\t<realBeatLocations></realBeatLocations>\n</TrackAnalysedData>\n";
-        let _ = fs::write(&str_path, str_content);
-
         // Estimate BPM from downloaded audio
         let detected_bpm = bpm::estimate_bpm(&audio_file).or_else(|| bpm::estimate_bpm(&dest_path));
         if let Some(b) = detected_bpm {
             log::info!("Calculated BPM for imported YouTube track '{}': {:.1}", raw_title, b);
         }
+
+        // Generate corresponding waveform .str file with valid Boost XML serialization
+        let str_path = dest_path.with_extension("str");
+        let str_content = generate_str_file_content(detected_bpm, duration);
+        let _ = fs::write(&str_path, str_content);
 
         // Register in SQLite music.db
         let track_input = pacemaker_core::db::NewTrackInput {
@@ -973,7 +1005,7 @@ async fn import_youtube_track(
             file_size,
             bit_rate: 320,
             sample_rate: 44100,
-            format: "MPEG-1 Layer 3".into(),
+            format: "MP3".into(),
             location: paths.virtual_location.clone(),
             bpm: detected_bpm,
             key: None,
@@ -1053,15 +1085,15 @@ fn import_local_track(
     fs::write(&dest_path, &file_bytes)
         .map_err(|e| format!("Pacemaker ストレージへのファイル書き込みに失敗しました: {}", e))?;
 
-    let str_path = dest_path.with_extension("str");
-    let str_content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<TrackAnalysedData>\n\t<normalizeFactor>1</normalizeFactor>\n\t<beatStartOffset>0</beatStartOffset>\n\t<realBeatLocations></realBeatLocations>\n</TrackAnalysedData>\n";
-    let _ = fs::write(&str_path, str_content);
-
     // Estimate BPM from imported audio
     let detected_bpm = bpm::estimate_bpm(&dest_path);
     if let Some(b) = detected_bpm {
         log::info!("Calculated BPM for local track '{}': {:.1}", raw_title, b);
     }
+
+    let str_path = dest_path.with_extension("str");
+    let str_content = generate_str_file_content(detected_bpm, 180);
+    let _ = fs::write(&str_path, str_content);
 
     let mut target_case_id: Option<i64> = None;
     if let Some(ref cname) = case_name {
@@ -1071,6 +1103,8 @@ fn import_local_track(
             target_case_id = Some(cid);
         }
     }
+
+    let canonical_format = pacemaker_core::db::normalize_audio_format(&ext, &paths.virtual_location).to_string();
 
     let track_input = pacemaker_core::db::NewTrackInput {
         title: raw_title.clone(),
@@ -1082,7 +1116,7 @@ fn import_local_track(
         file_size,
         bit_rate: 320,
         sample_rate: 44100,
-        format: format!("Audio ({})", ext.to_uppercase()),
+        format: canonical_format,
         location: paths.virtual_location.clone(),
         bpm: detected_bpm,
         key: None,

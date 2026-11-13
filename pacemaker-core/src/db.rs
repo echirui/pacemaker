@@ -58,7 +58,50 @@ impl PacemakerDb {
             CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks (artist);
             CREATE INDEX IF NOT EXISTS idx_tracks_title ON tracks (title);
         ");
-        Ok(Self { conn })
+        let db = Self { conn };
+        let _ = db.repair_and_migrate();
+        Ok(db)
+    }
+
+    /// Automatically repairs any malformed track records (e.g. invalid format strings
+    /// or missing global_id) caused by previous imports or older firmware tools.
+    pub fn repair_and_migrate(&self) -> Result<usize> {
+        let mut changes = 0;
+
+        // 1. Repair format strings to Pacemaker firmware container plugin names
+        changes += self.conn.execute(
+            "UPDATE tracks SET format = 'MP3' WHERE format != 'MP3' AND (
+                format LIKE '%MPEG-1%' OR format LIKE '%mp3%' OR format LIKE 'Audio (MP3)%' OR format LIKE '%Layer 3%'
+            )",
+            [],
+        )?;
+        changes += self.conn.execute(
+            "UPDATE tracks SET format = 'MPEG-4' WHERE format != 'MPEG-4' AND (
+                format LIKE '%m4a%' OR format LIKE '%aac%' OR format LIKE '%mp4%' OR format LIKE 'Audio (M4A)%'
+            )",
+            [],
+        )?;
+
+        // 2. Repair missing global_id
+        let mut stmt = self.conn.prepare("SELECT track_id, title, artist, file_size FROM tracks WHERE global_id IS NULL OR global_id = ''")?;
+        let missing_globals: Vec<(TrackId, String, String, u64)> = stmt.query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                row.get::<_, Option<i64>>(3)?.unwrap_or(0) as u64,
+            ))
+        })?.filter_map(|r| r.ok()).collect();
+
+        for (tid, title, artist, fsize) in missing_globals {
+            let gid = crate::hasher::generate_global_id(&title, &artist, fsize);
+            changes += self.conn.execute(
+                "UPDATE tracks SET global_id = ?1 WHERE track_id = ?2",
+                params![gid, tid],
+            )?;
+        }
+
+        Ok(changes)
     }
 
     /// Releases freed SQLite pages and memory buffers back to the operating system
@@ -433,13 +476,16 @@ impl PacemakerDb {
         let key_val = input.key.as_deref().unwrap_or("");
         let comments_val = input.comments.as_deref().unwrap_or("");
 
+        let canonical_format = normalize_audio_format(&input.format, &input.location);
+        let global_id = crate::hasher::generate_global_id(&input.title, &input.artist, input.file_size);
+
         self.conn.execute(
             "INSERT INTO tracks (
                 title, artist, album, genre, year,
                 location, format, bit_rate, sample_rate, file_size,
                 play_time_secs, rating, comments, date_added, last_played,
                 times_played, cue_point, rc_mixes, bpm, label,
-                track_flags, loop_in, loop_out, ind_title, ind_artist,
+                track_flags, global_id, loop_in, loop_out, ind_title, ind_artist,
                 ind_album, ind_genre, ind_bpm, key, date_modified, modified_by_ed,
                 analyzed_by_ed, analysis_ver
             ) VALUES (
@@ -447,8 +493,8 @@ impl PacemakerDb {
                 ?6, ?7, ?8, ?9, ?10,
                 ?11, 0, ?12, ?13, -1,
                 0, -1, 0, ?14, '',
-                2, -1, -1, ?15, ?16,
-                ?17, ?18, ?19, ?20, ?13, '2.0.2.14170',
+                2, ?15, -1, -1, ?16, ?17,
+                ?18, ?19, ?20, ?21, ?13, '2.0.2.14170',
                 '2.0.2.14170', 1
             )",
             params![
@@ -458,7 +504,7 @@ impl PacemakerDb {
                 genre_val,
                 year_val,
                 input.location,
-                input.format,
+                canonical_format,
                 input.bit_rate,
                 input.sample_rate,
                 input.file_size as i64,
@@ -466,6 +512,7 @@ impl PacemakerDb {
                 comments_val,
                 now,
                 bpm_val,
+                global_id,
                 ind_title,
                 ind_artist,
                 ind_album,
@@ -476,6 +523,42 @@ impl PacemakerDb {
         )?;
 
         Ok(self.conn.last_insert_rowid())
+    }
+}
+
+/// Normalizes audio format strings to exact container plugin names
+/// recognized by Tonium Pacemaker firmware pmplayer ("MP3", "MPEG-4", "FLAC", "WAV", "OGG", "AIFF", "SND").
+pub fn normalize_audio_format(format_str: &str, location: &str) -> &'static str {
+    let lower = format_str.to_lowercase();
+    if lower.contains("mp3") || lower.contains("mpeg-1") || lower.contains("layer 3") {
+        "MP3"
+    } else if lower.contains("mpeg-4") || lower.contains("m4a") || lower.contains("aac") || lower.contains("mp4") {
+        "MPEG-4"
+    } else if lower.contains("flac") {
+        "FLAC"
+    } else if lower.contains("wav") {
+        "WAV"
+    } else if lower.contains("ogg") || lower.contains("vorbis") {
+        "OGG"
+    } else if lower.contains("aiff") || lower.contains("aif") {
+        "AIFF"
+    } else if lower.contains("snd") || lower.contains("au") {
+        "SND"
+    } else {
+        let loc_lower = location.to_lowercase();
+        if loc_lower.ends_with(".m4a") || loc_lower.ends_with(".aac") || loc_lower.ends_with(".mp4") {
+            "MPEG-4"
+        } else if loc_lower.ends_with(".flac") {
+            "FLAC"
+        } else if loc_lower.ends_with(".wav") {
+            "WAV"
+        } else if loc_lower.ends_with(".ogg") {
+            "OGG"
+        } else if loc_lower.ends_with(".aiff") || loc_lower.ends_with(".aif") {
+            "AIFF"
+        } else {
+            "MP3"
+        }
     }
 }
 
@@ -564,6 +647,51 @@ mod tests {
         assert_eq!(tracks[0].title, "Test YouTube Track");
         assert_eq!(tracks[0].artist, "Test Artist");
         assert_eq!(tracks[0].bpm, 128.0);
+
+        let fmt: String = db.conn.query_row("SELECT format FROM tracks WHERE track_id = ?1", params![id], |r| r.get(0)).unwrap();
+        assert_eq!(fmt, "MP3");
+        let gid: String = db.conn.query_row("SELECT global_id FROM tracks WHERE track_id = ?1", params![id], |r| r.get(0)).unwrap();
+        assert_eq!(gid.len(), 32);
+    }
+
+    #[test]
+    fn test_repair_and_migrate() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("
+            CREATE TABLE tracks (
+                track_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                artist VARCHAR(255), album_artist VARCHAR(255), title VARCHAR(255), composer VARCHAR(255),
+                album VARCHAR(255), track_number NUMBER(4), year NUMBER(4), genre VARCHAR(255),
+                is_part_of_c NUMBER(1), location VARCHAR(255), format VARCHAR(32), bit_rate NUMBER(10),
+                sample_rate NUMBER(10), file_size NUMBER(10), play_time_secs NUMBER(10), rating NUMBER(1),
+                comments VARCHAR(255), date_added NUMBER(20), last_played NUMBER(20), times_played NUMBER(10),
+                cue_point NUMBER(20), rc_mixes NUMBER(10), bpm REAL, label VARCHAR(255),
+                track_flags NUMBER(10) DEFAULT 0, global_id VARCHAR(255), loop_in NUMBER(20), loop_out NUMBER(20),
+                structured_ct VARCHAR(511), ind_title VARCHAR(32), ind_artist VARCHAR(32), ind_album VARCHAR(32),
+                ind_genre VARCHAR(32), ind_bpm INTEGER, discid VARCHAR(255), producer VARCHAR(255),
+                remixer VARCHAR(255), key VARCHAR(4), number_of_tracks NUMBER(4), disc_number NUMBER(4),
+                number_of_discs NUMBER(4), date_modified NUMBER(20), modified_by_ed VARCHAR(32),
+                analyzed_by_ed VARCHAR(32), analysis_ver INTEGER
+            );
+            INSERT INTO tracks (title, artist, format, location, file_size) VALUES
+                ('Song 1', 'Artist 1', 'MPEG-1 Layer 3', '/pmdb_tracks/1.mp3', 1000),
+                ('Song 2', 'Artist 2', 'Audio (MP3)', '/pmdb_tracks/2.mp3', 2000),
+                ('Song 3', 'Artist 3', 'audio/mp4', '/pmdb_tracks/3.m4a', 3000);
+        ").unwrap();
+
+        let db = PacemakerDb { conn };
+        let changes = db.repair_and_migrate().expect("repair should succeed");
+        assert!(changes > 0);
+
+        let fmt1: String = db.conn.query_row("SELECT format FROM tracks WHERE track_id = 1", [], |r| r.get(0)).unwrap();
+        let fmt2: String = db.conn.query_row("SELECT format FROM tracks WHERE track_id = 2", [], |r| r.get(0)).unwrap();
+        let fmt3: String = db.conn.query_row("SELECT format FROM tracks WHERE track_id = 3", [], |r| r.get(0)).unwrap();
+        assert_eq!(fmt1, "MP3");
+        assert_eq!(fmt2, "MP3");
+        assert_eq!(fmt3, "MPEG-4");
+
+        let gid1: String = db.conn.query_row("SELECT global_id FROM tracks WHERE track_id = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(gid1.len(), 32);
     }
 
     #[test]
